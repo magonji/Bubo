@@ -1,0 +1,18 @@
+services:
+  bubo:
+    build: .
+    container_name: bubo
+    restart: unless-stopped
+    env_file: .env
+    ports:
+      # Local only; expose it through an HTTPS reverse proxy.
+      - "127.0.0.1:${BUBO_PORT:-8000}:8000"
+    volumes:
+      # The data folder on the host: set BUBO_DATA_DIR in .env (e.g. an external disk).
+      # It must already exist: if the disk is not mounted, the container refuses to start
+      # instead of silently creating an empty library on the internal disk.
+      - type: bind
+        source: ${BUBO_DATA_DIR:-./data}
+        target: /data
+        bind:
+          create_host_path: false

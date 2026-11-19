@@ -1,0 +1,138 @@
+<!doctype html>
+<html lang="en-GB">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Bubo</title>
+<link rel="icon" type="image/svg+xml" href="/static/owl.svg">
+<link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+
+<div id="login" class="login hidden">
+  <form id="login-form" class="login-card">
+    <h1 class="brand-name"><svg class="logo logo-lg" viewBox="0 0 32 32" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M8.5 17.5V9.5L10 4l3.6 4h4.8L22 4l1.5 5.5v8c0 5.2-3.4 9-7.5 9s-7.5-3.8-7.5-9z"/><path d="M10.2 11.2Q13 9.6 16 12.6Q19 9.6 21.8 11.2"/><circle cx="13" cy="14.6" r="1.9"/><circle cx="19" cy="14.6" r="1.9"/><path d="M16 15.8v2.2"/><path d="M5 29h22M13.5 26.4V29M18.5 26.4V29"/></svg><span class="wordmark">Bubo</span></h1>
+    <p>Your paper library</p>
+    <input type="password" id="login-password" placeholder="Password" autocomplete="current-password" required autofocus>
+    <button type="submit" class="primary">Sign in</button>
+    <p id="login-error" class="error"></p>
+  </form>
+</div>
+
+<div id="app" class="app hidden">
+  <header class="topbar">
+    <div class="brand"><svg class="logo" viewBox="0 0 32 32" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M8.5 17.5V9.5L10 4l3.6 4h4.8L22 4l1.5 5.5v8c0 5.2-3.4 9-7.5 9s-7.5-3.8-7.5-9z"/><path d="M10.2 11.2Q13 9.6 16 12.6Q19 9.6 21.8 11.2"/><circle cx="13" cy="14.6" r="1.9"/><circle cx="19" cy="14.6" r="1.9"/><path d="M16 15.8v2.2"/><path d="M5 29h22M13.5 26.4V29M18.5 26.4V29"/></svg><span class="wordmark">Bubo</span></div>
+    <div class="search-box clearable">
+      <input type="search" id="search" placeholder="Search titles, authors, abstracts and full text…" aria-label="Search"
+        aria-controls="search-suggest" autocomplete="off">
+      <kbd id="search-hint" class="search-hint" aria-hidden="true">/</kbd>
+      <button type="button" id="search-clear" class="input-clear hidden" title="Clear search (Esc)" aria-label="Clear search"><i data-icon="x"></i></button>
+      <div id="search-suggest" class="search-suggest hidden"></div>
+    </div>
+    <button type="button" id="add-btn" class="primary add-btn" title="Add papers by identifier, from PDFs or manually">
+      <i data-icon="plus"></i> Add</button>
+    <div class="menu-wrap">
+      <button id="menu-btn" class="icon-btn" data-tip="Settings, export and sign out" aria-label="Menu"
+        aria-haspopup="menu" aria-expanded="false" aria-controls="main-menu"><i data-icon="menu"></i></button>
+      <div id="main-menu" class="menu hidden" role="menu" aria-label="Menu">
+        <button type="button" role="menuitem" data-menu="settings"><i data-icon="settings"></i> Settings…</button>
+        <button type="button" role="menuitem" data-menu="export"><i data-icon="download"></i> Export view to BibTeX</button>
+        <div class="menu-sep" role="separator"></div>
+        <button type="button" role="menuitem" data-menu="signout"><i data-icon="log-out"></i> Sign out</button>
+      </div>
+    </div>
+  </header>
+
+  <main class="panes">
+    <aside class="sidebar" id="sidebar">
+      <div class="side-section">
+        <div class="side-item" data-view="all"><i data-icon="library"></i><span class="name">My library</span><span class="count" id="count-all"></span></div>
+        <div class="side-item" data-view="unfiled"><i data-icon="inbox"></i><span class="name">Unfiled items</span><span class="count" id="count-unfiled"></span></div>
+        <div class="side-item" data-view="toread" id="side-toread" title="Papers you want to read. Drag papers here to add them.">
+          <i data-icon="bookmark"></i><span class="name">Reading list</span><span class="count" id="count-toread"></span></div>
+      </div>
+      <div class="side-section">
+        <div class="side-head" id="collections-head" title="Drop a collection here to move it to the top level">Collections <button id="add-collection" class="mini" title="New collection" aria-label="New collection"><i data-icon="plus"></i></button></div>
+        <div id="collections"></div>
+      </div>
+      <div class="side-section">
+        <div class="side-head">Tags</div>
+        <div id="tags" class="tag-cloud"></div>
+      </div>
+    </aside>
+
+    <section class="list">
+      <div class="list-head">
+        <span id="view-title"></span>
+        <span id="count" class="muted"></span>
+        <div class="list-tools">
+          <label id="sub-toggle" class="sub-toggle hidden" title="Also list the papers in this collection's subcollections">
+            <input type="checkbox" class="switch" role="switch" id="include-sub"> Include subcollections</label>
+          <label id="toread-order" class="sub-toggle hidden">Order
+            <select id="toread-order-select" aria-label="Order of the reading list">
+              <option value="to_read">Oldest added first</option>
+              <option value="to_read_desc">Newest added first</option>
+              <option value="" disabled>By column</option>
+            </select></label>
+          <div class="density" role="group" aria-label="Row layout">
+            <button type="button" class="icon-btn" data-density="comfortable" data-tip="Comfortable: authors and venue under the title" aria-label="Comfortable rows"><i data-icon="rows-2"></i></button>
+            <button type="button" class="icon-btn" data-density="compact" data-tip="Compact: one line per paper" aria-label="Compact rows"><i data-icon="rows-1"></i></button>
+          </div>
+        </div>
+      </div>
+      <div class="table-wrap">
+        <table id="items-table">
+          <colgroup id="items-cols"></colgroup>
+          <thead id="items-head"></thead>
+          <tbody id="items"></tbody>
+        </table>
+        <div id="empty" class="empty hidden">
+          <p>There are no items here.</p>
+          <p class="muted">Drag PDFs onto the window, or press <b>Add</b>.</p>
+        </div>
+      </div>
+    </section>
+
+    <section class="detail" id="detail">
+
+    </section>
+  </main>
+</div>
+
+<div id="viewer" class="viewer hidden">
+  <div class="viewer-bar">
+    <button id="viewer-close" title="Close (Esc)" aria-label="Close"><i data-icon="x"></i></button>
+    <span id="viewer-title"></span>
+    <div class="vgroup">
+      <input id="page-input" type="number" min="1" title="Go to page"> <span id="page-count" class="muted"></span>
+    </div>
+    <div class="vgroup">
+      <button id="zoom-out" title="Zoom out (−)">−</button>
+      <span id="zoom-level">100%</span>
+      <button id="zoom-in" title="Zoom in (+)">+</button>
+      <button id="zoom-fit" title="Fit to width (0)">Fit</button>
+    </div>
+    <div class="vgroup" id="colour-picker"></div>
+    <button id="note-mode" title="Add a note: then click anywhere on a page (N)"><i data-icon="note"></i> Note</button>
+    <button id="sidebar-toggle" title="Show or hide the annotations">Annotations</button>
+    <a id="viewer-download" title="Download the original PDF">Original</a>
+    <a id="viewer-annotated" title="Download a copy with the annotations embedded">With annotations</a>
+  </div>
+  <div class="viewer-body">
+    <div id="pages" class="pages"></div>
+    <aside id="ann-sidebar" class="ann-sidebar"></aside>
+  </div>
+  <div id="sel-popup" class="sel-popup hidden"></div>
+</div>
+
+<div id="drop-overlay" class="drop-overlay hidden"><div>Drop PDFs to add them</div></div>
+<div id="toasts" class="toasts"></div>
+<dialog id="upload-dialog" class="dialog dialog-narrow" aria-labelledby="upload-title"></dialog>
+<dialog id="settings-dialog" class="dialog dialog-narrow" aria-labelledby="settings-title"></dialog>
+<dialog id="refresh-dialog" class="dialog" aria-labelledby="refresh-title"></dialog>
+<input type="file" id="attach-input" accept="application/pdf,.pdf" hidden>
+
+<script src="/static/app.js"></script>
+<script type="module" src="/static/viewer.js"></script>
+</body>
+</html>

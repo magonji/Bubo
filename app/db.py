@@ -1,0 +1,666 @@
+"""SQLite access: schema, items, collections, tags and FTS5 search."""
+
+import json
+import re
+import sqlite3
+import unicodedata
+from datetime import datetime, timezone
+
+from . import storage
+from .config import settings
+
+SCHEMA = """
+CREATE TABLE IF NOT EXISTS items (
+    id           INTEGER PRIMARY KEY,
+    item_type    TEXT NOT NULL DEFAULT 'article',
+    title        TEXT NOT NULL DEFAULT '',
+    authors      TEXT NOT NULL DEFAULT '[]',   -- JSON: [{"given": .., "family": ..}]
+    year         INTEGER,
+    venue        TEXT,
+    volume       TEXT,
+    issue        TEXT,
+    pages        TEXT,
+    publisher    TEXT,
+    doi          TEXT,
+    arxiv_id     TEXT,
+    url          TEXT,
+    abstract     TEXT,
+    citekey      TEXT UNIQUE,
+    notes        TEXT,
+    file_name    TEXT,
+    file_size    INTEGER,
+    file_hash    TEXT,
+    added_at     TEXT NOT NULL,
+    modified_at  TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_items_doi ON items(lower(doi));
+CREATE INDEX IF NOT EXISTS idx_items_arxiv ON items(arxiv_id);
+CREATE INDEX IF NOT EXISTS idx_items_hash ON items(file_hash);
+
+CREATE TABLE IF NOT EXISTS collections (
+    id        INTEGER PRIMARY KEY,
+    name      TEXT NOT NULL,
+    parent_id INTEGER REFERENCES collections(id) ON DELETE CASCADE
+);
+
+CREATE TABLE IF NOT EXISTS item_collections (
+    item_id       INTEGER NOT NULL REFERENCES items(id) ON DELETE CASCADE,
+    collection_id INTEGER NOT NULL REFERENCES collections(id) ON DELETE CASCADE,
+    PRIMARY KEY (item_id, collection_id)
+);
+
+CREATE TABLE IF NOT EXISTS tags (
+    id   INTEGER PRIMARY KEY,
+    name TEXT NOT NULL UNIQUE COLLATE NOCASE
+);
+
+CREATE TABLE IF NOT EXISTS item_tags (
+    item_id INTEGER NOT NULL REFERENCES items(id) ON DELETE CASCADE,
+    tag_id  INTEGER NOT NULL REFERENCES tags(id) ON DELETE CASCADE,
+    PRIMARY KEY (item_id, tag_id)
+);
+
+CREATE TABLE IF NOT EXISTS annotations (
+    id          INTEGER PRIMARY KEY,
+    item_id     INTEGER NOT NULL REFERENCES items(id) ON DELETE CASCADE,
+    kind        TEXT NOT NULL,              -- 'highlight' | 'note'
+    color       TEXT NOT NULL,
+    page        INTEGER NOT NULL,           -- zero-based page index
+    rects       TEXT NOT NULL,              -- JSON [[x1, y1, x2, y2], ...] in PDF user space
+    text        TEXT,                       -- highlighted text
+    comment     TEXT,
+    created_at  TEXT NOT NULL,
+    modified_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_annotations_item ON annotations(item_id, page);
+
+CREATE TABLE IF NOT EXISTS settings (
+    key   TEXT PRIMARY KEY,
+    value TEXT NOT NULL      -- JSON
+);
+
+CREATE VIRTUAL TABLE IF NOT EXISTS items_fts USING fts5(
+    title, authors, abstract, venue, extra, fulltext,
+    tokenize = 'unicode61 remove_diacritics 2'
+);
+"""
+
+META_FIELDS = [
+    "item_type", "title", "authors", "year", "venue", "volume", "issue",
+    "pages", "publisher", "doi", "arxiv_id", "url", "abstract", "notes",
+]
+ITEM_TYPES = [
+    "article", "inproceedings", "preprint", "book", "incollection",
+    "phdthesis", "mastersthesis", "techreport", "misc",
+]
+SORTS = {
+    "added": "i.added_at DESC, i.id DESC",
+    "added_asc": "i.added_at ASC, i.id ASC",
+    "year": "i.year DESC NULLS LAST, i.title",
+    "year_asc": "i.year ASC NULLS LAST, i.title",
+    "title": "lower(i.title) ASC",
+    "title_desc": "lower(i.title) DESC",
+    "authors": "lower(json_extract(i.authors, '$[0].family')) ASC NULLS LAST",
+    "authors_desc": "lower(json_extract(i.authors, '$[0].family')) DESC NULLS LAST",
+    "venue": "lower(i.venue) ASC NULLS LAST",
+    "venue_desc": "lower(i.venue) DESC NULLS LAST",
+    # Reading list: the order in which papers were put on it.
+    "to_read": "i.to_read_at ASC, i.id ASC",
+    "to_read_desc": "i.to_read_at DESC, i.id DESC",
+}
+
+
+def now() -> str:
+    return datetime.now(timezone.utc).isoformat(timespec="seconds")
+
+
+def connect() -> sqlite3.Connection:
+    conn = sqlite3.connect(settings.db_path, timeout=30, check_same_thread=False)
+    conn.row_factory = sqlite3.Row
+    conn.execute("PRAGMA foreign_keys = ON")
+    return conn
+
+
+def init_db() -> None:
+    conn = connect()
+    conn.execute("PRAGMA journal_mode = WAL")
+    conn.executescript(SCHEMA)
+    columns = {r["name"] for r in conn.execute("PRAGMA table_info(items)")}
+    if "to_read_at" not in columns:
+        # When the item was put on the reading list (NULL: not on it).
+        conn.execute("ALTER TABLE items ADD COLUMN to_read_at TEXT")
+    conn.commit()
+    conn.close()
+
+
+def get_db():
+    """FastAPI dependency: one connection per request."""
+    conn = connect()
+    try:
+        yield conn
+    finally:
+        conn.close()
+
+
+# --------------------------------------------------------------------------- #
+# Utilities
+# --------------------------------------------------------------------------- #
+
+def authors_to_text(authors: list[dict]) -> str:
+    return "; ".join(
+        " ".join(p for p in (a.get("given"), a.get("family")) if p) for a in authors
+    )
+
+
+def _ascii(s: str) -> str:
+    return unicodedata.normalize("NFKD", s).encode("ascii", "ignore").decode()
+
+
+STOPWORDS = {"a", "an", "the", "on", "of", "in", "for", "to", "and", "with"}
+
+
+def make_citekey(conn: sqlite3.Connection, item: dict, exclude_id: int | None = None) -> str:
+    authors = item.get("authors") or []
+    family = authors[0].get("family", "") if authors else ""
+    base = re.sub(r"[^a-z]", "", _ascii(family).lower()) or "anon"
+    base += str(item.get("year") or "")
+    words = [w for w in re.findall(r"[a-z0-9]+", _ascii(item.get("title") or "").lower())
+             if w not in STOPWORDS]
+    if words:
+        base += words[0]
+    key, n = base, 0
+    while True:
+        row = conn.execute("SELECT id FROM items WHERE citekey = ?", (key,)).fetchone()
+        if row is None or row["id"] == exclude_id:
+            return key
+        key = base + chr(ord("a") + n) if n < 26 else f"{base}{n}"
+        n += 1
+
+
+def fts_query(q: str) -> str | None:
+    tokens = re.findall(r"\w+", q, re.UNICODE)
+    if not tokens:
+        return None
+    return " ".join(f'"{t}"*' for t in tokens)
+
+
+# --------------------------------------------------------------------------- #
+# Items
+# --------------------------------------------------------------------------- #
+
+def _row_to_item(row: sqlite3.Row, tags: list[str], collections: list[int]) -> dict:
+    item = dict(row)
+    item["annotation_count"] = item.pop("annotation_count", 0) or 0
+    item["to_read"] = bool(item.get("to_read_at"))
+    item["authors"] = json.loads(item["authors"] or "[]")
+    file_name = item.pop("file_name")
+    item["has_file"] = bool(file_name)
+    # Name inside the papers folder, once the file has been given its readable name.
+    item["file_path"] = file_name if storage.is_in_place(file_name) else None
+    item.pop("primary_collection_id", None)  # left over from the per-collection folder layout
+    item.pop("file_hash", None)
+    item["tags"] = sorted(tags, key=str.lower)
+    item["collections"] = collections
+    return item
+
+
+def _relations(conn, ids: list[int]) -> tuple[dict, dict]:
+    tags: dict[int, list[str]] = {i: [] for i in ids}
+    cols: dict[int, list[int]] = {i: [] for i in ids}
+    if not ids:
+        return tags, cols
+    marks = ",".join("?" * len(ids))
+    for r in conn.execute(
+        f"SELECT it.item_id, t.name FROM item_tags it JOIN tags t ON t.id = it.tag_id "
+        f"WHERE it.item_id IN ({marks})", ids):
+        tags[r[0]].append(r[1])
+    for r in conn.execute(
+        f"SELECT item_id, collection_id FROM item_collections WHERE item_id IN ({marks}) "
+        f"ORDER BY rowid", ids):
+        cols[r[0]].append(r[1])
+    return tags, cols
+
+
+_ANN_COUNT = "(SELECT COUNT(*) FROM annotations a WHERE a.item_id = i.id) AS annotation_count"
+
+
+def get_item(conn, item_id: int) -> dict | None:
+    row = conn.execute(f"SELECT i.*, {_ANN_COUNT} FROM items i WHERE i.id = ?",
+                       (item_id,)).fetchone()
+    if row is None:
+        return None
+    tags, cols = _relations(conn, [item_id])
+    return _row_to_item(row, tags[item_id], cols[item_id])
+
+
+def get_item_file(conn, item_id: int) -> tuple[str | None, str | None]:
+    row = conn.execute("SELECT file_name, citekey FROM items WHERE id = ?", (item_id,)).fetchone()
+    return (row["file_name"], row["citekey"]) if row else (None, None)
+
+
+def list_items(conn, q: str | None = None, collection_id: int | None = None,
+               tag: str | None = None, unfiled: bool = False, sort: str = "added",
+               ids: list[int] | None = None, subcollections: bool = False,
+               to_read: bool = False) -> list[dict]:
+    where, params = [], []
+    if q:
+        fq = fts_query(q)
+        if fq:
+            where.append("i.id IN (SELECT rowid FROM items_fts WHERE items_fts MATCH ?)")
+            params.append(fq)
+    if collection_id is not None and subcollections:
+        # The collection and all its descendants, at any depth.
+        where.append("i.id IN (WITH RECURSIVE sub(id) AS (SELECT ? UNION "
+                     "SELECT c.id FROM collections c JOIN sub ON c.parent_id = sub.id) "
+                     "SELECT item_id FROM item_collections WHERE collection_id IN sub)")
+        params.append(collection_id)
+    elif collection_id is not None:
+        where.append("i.id IN (SELECT item_id FROM item_collections WHERE collection_id = ?)")
+        params.append(collection_id)
+    if unfiled:
+        where.append("i.id NOT IN (SELECT item_id FROM item_collections)")
+    if to_read:
+        where.append("i.to_read_at IS NOT NULL")
+    if tag:
+        where.append("i.id IN (SELECT it.item_id FROM item_tags it JOIN tags t "
+                     "ON t.id = it.tag_id WHERE t.name = ? COLLATE NOCASE)")
+        params.append(tag)
+    if ids is not None:
+        if not ids:
+            return []
+        where.append(f"i.id IN ({','.join('?' * len(ids))})")
+        params.extend(ids)
+    sql = f"SELECT i.*, {_ANN_COUNT} FROM items i"
+    if where:
+        sql += " WHERE " + " AND ".join(where)
+    sql += " ORDER BY " + SORTS.get(sort, SORTS["added"])
+    rows = conn.execute(sql, params).fetchall()
+    tags, cols = _relations(conn, [r["id"] for r in rows])
+    items = [_row_to_item(r, tags[r["id"]], cols[r["id"]]) for r in rows]
+    fq = fts_query(q) if q else None
+    if fq and items:
+        matches = search_snippets(conn, fq)
+        for item in items:
+            item["match"] = matches.get(item["id"])
+    return items
+
+
+HL_START, HL_END = "\x02", "\x03"   # highlight markers in snippets (rendered as <mark>)
+
+# Columns of items_fts that get a snippet, in order of preference. Matches in the title
+# or authors are already visible in the list, so they need none.
+_SNIPPET_COLUMNS = [(5, "fulltext", 32), (2, "abstract", 32), (4, "notes", 24)]
+
+
+def clean_snippet(text: str) -> str:
+    text = re.sub(r"(\w)-\s*\n\s*(\w)", r"\1\2", text)   # words hyphenated across lines
+    return re.sub(r"\s+", " ", text).strip()
+
+
+def search_snippets(conn, fts: str) -> dict[int, dict]:
+    """For each matching item, a short highlighted excerpt and the field it comes from."""
+    cols = ", ".join(f"snippet(items_fts, {c}, '{HL_START}', '{HL_END}', '…', {n})"
+                     for c, _, n in _SNIPPET_COLUMNS)
+    out = {}
+    marked = re.compile(f"{HL_START}(.*?){HL_END}", re.S)
+    for row in conn.execute(f"SELECT rowid, {cols} FROM items_fts WHERE items_fts MATCH ?", (fts,)):
+        best, best_terms = None, 0
+        # Prefer the field whose excerpt contains the most distinct search terms; ties go to
+        # the earlier field in _SNIPPET_COLUMNS.
+        for (_, field, _), snippet in zip(_SNIPPET_COLUMNS, row[1:]):
+            terms = len({m.lower() for m in marked.findall(snippet or "")})
+            if terms > best_terms:
+                best, best_terms = {"field": field, "snippet": clean_snippet(snippet)}, terms
+        if best:
+            out[row[0]] = best
+    return out
+
+
+def find_duplicate(conn, doi: str | None = None, arxiv_id: str | None = None,
+                   file_hash: str | None = None) -> int | None:
+    if file_hash:
+        r = conn.execute("SELECT id FROM items WHERE file_hash = ?", (file_hash,)).fetchone()
+        if r:
+            return r["id"]
+    if doi:
+        r = conn.execute("SELECT id FROM items WHERE lower(doi) = lower(?)", (doi,)).fetchone()
+        if r:
+            return r["id"]
+    if arxiv_id:
+        base = re.sub(r"v\d+$", "", arxiv_id)
+        r = conn.execute("SELECT id FROM items WHERE arxiv_id = ? OR arxiv_id LIKE ?",
+                         (base, base + "v%")).fetchone()
+        if r:
+            return r["id"]
+    return None
+
+
+def _clean(meta: dict) -> dict:
+    out = {}
+    for k in META_FIELDS:
+        if k not in meta:
+            continue
+        v = meta[k]
+        if k == "authors":
+            v = json.dumps([{"given": (a.get("given") or "").strip(),
+                             "family": (a.get("family") or "").strip()}
+                            for a in (v or []) if a.get("given") or a.get("family")],
+                           ensure_ascii=False)
+        elif k == "year":
+            try:
+                v = int(v) if v not in (None, "") else None
+            except (TypeError, ValueError):
+                v = None
+        elif k == "item_type":
+            v = v if v in ITEM_TYPES else "misc"
+        elif isinstance(v, str):
+            v = v.strip() or None
+            if k == "title":
+                v = v or ""
+        out[k] = v
+    return out
+
+
+def create_item(conn, meta: dict, file: dict | None = None, fulltext: str | None = None,
+                tags: list[str] | None = None, collection_ids: list[int] | None = None) -> int:
+    data = _clean(meta)
+    data.setdefault("title", "")
+    data.setdefault("item_type", "article")
+    ts = now()
+    data["added_at"] = data["modified_at"] = ts
+    if file:
+        data.update(file_name=file["name"], file_size=file["size"], file_hash=file["hash"])
+    data["citekey"] = make_citekey(conn, {**meta, "authors": meta.get("authors") or []})
+    cols = ", ".join(data)
+    cur = conn.execute(f"INSERT INTO items ({cols}) VALUES ({','.join('?' * len(data))})",
+                       list(data.values()))
+    item_id = cur.lastrowid
+    if tags:
+        set_tags(conn, item_id, tags, do_reindex=False)
+    if collection_ids:
+        set_collections(conn, item_id, collection_ids)
+    reindex(conn, item_id, fulltext=fulltext or "")
+    conn.commit()
+    return item_id
+
+
+def update_item(conn, item_id: int, changes: dict) -> None:
+    data = _clean(changes)
+    if "citekey" in changes:
+        key = re.sub(r"[^\w:\-.]", "", changes.get("citekey") or "")
+        if key:
+            clash = conn.execute("SELECT id FROM items WHERE citekey = ? AND id != ?",
+                                 (key, item_id)).fetchone()
+            if clash:
+                raise ValueError(f"The citation key '{key}' already exists")
+            data["citekey"] = key
+    if data:
+        data["modified_at"] = now()
+        sets = ", ".join(f"{k} = ?" for k in data)
+        conn.execute(f"UPDATE items SET {sets} WHERE id = ?", [*data.values(), item_id])
+    if "tags" in changes:
+        set_tags(conn, item_id, changes["tags"] or [], do_reindex=False)
+    if "collections" in changes:
+        set_collections(conn, item_id, changes["collections"] or [])
+    if "to_read" in changes:
+        set_to_read(conn, item_id, bool(changes["to_read"]))
+    reindex(conn, item_id)
+    conn.commit()
+
+
+def set_file(conn, item_id: int, file: dict, fulltext: str) -> None:
+    conn.execute("UPDATE items SET file_name = ?, file_size = ?, file_hash = ?, modified_at = ? "
+                 "WHERE id = ?", (file["name"], file["size"], file["hash"], now(), item_id))
+    reindex(conn, item_id, fulltext=fulltext)
+    conn.commit()
+
+
+def delete_item(conn, item_id: int) -> str | None:
+    """Delete the item and return its file name (if any) so the caller can remove it."""
+    row = conn.execute("SELECT file_name FROM items WHERE id = ?", (item_id,)).fetchone()
+    if row is None:
+        return None
+    conn.execute("DELETE FROM items WHERE id = ?", (item_id,))
+    conn.execute("DELETE FROM items_fts WHERE rowid = ?", (item_id,))
+    conn.execute("DELETE FROM tags WHERE id NOT IN (SELECT tag_id FROM item_tags)")
+    conn.commit()
+    return row["file_name"]
+
+
+def reindex(conn, item_id: int, fulltext: str | None = None) -> None:
+    if fulltext is None:
+        r = conn.execute("SELECT fulltext FROM items_fts WHERE rowid = ?", (item_id,)).fetchone()
+        fulltext = r[0] if r else ""
+    item = get_item(conn, item_id)
+    conn.execute("DELETE FROM items_fts WHERE rowid = ?", (item_id,))
+    annotations = " ".join(
+        " ".join(filter(None, (r["text"], r["comment"])))
+        for r in conn.execute("SELECT text, comment FROM annotations WHERE item_id = ?", (item_id,)))
+    extra = " ".join(filter(None, [item.get("doi"), item.get("arxiv_id"), item.get("citekey"),
+                                   item.get("notes"), " ".join(item["tags"]), annotations]))
+    conn.execute(
+        "INSERT INTO items_fts (rowid, title, authors, abstract, venue, extra, fulltext) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?)",
+        (item_id, item["title"], authors_to_text(item["authors"]), item.get("abstract") or "",
+         item.get("venue") or "", extra, fulltext))
+
+
+# --------------------------------------------------------------------------- #
+# Tags
+# --------------------------------------------------------------------------- #
+
+def set_tags(conn, item_id: int, names: list[str], do_reindex: bool = True) -> None:
+    clean = []
+    for n in names:
+        n = n.strip()
+        if n and n.lower() not in {c.lower() for c in clean}:
+            clean.append(n[:100])
+    conn.execute("DELETE FROM item_tags WHERE item_id = ?", (item_id,))
+    for n in clean:
+        conn.execute("INSERT OR IGNORE INTO tags (name) VALUES (?)", (n,))
+        tag_id = conn.execute("SELECT id FROM tags WHERE name = ?", (n,)).fetchone()[0]
+        conn.execute("INSERT OR IGNORE INTO item_tags VALUES (?, ?)", (item_id, tag_id))
+    conn.execute("DELETE FROM tags WHERE id NOT IN (SELECT tag_id FROM item_tags)")
+    if do_reindex:
+        reindex(conn, item_id)
+
+
+def list_tags(conn) -> list[dict]:
+    rows = conn.execute(
+        "SELECT t.name, COUNT(it.item_id) AS count FROM tags t "
+        "JOIN item_tags it ON it.tag_id = t.id GROUP BY t.id ORDER BY lower(t.name)")
+    return [dict(r) for r in rows]
+
+
+# --------------------------------------------------------------------------- #
+# Collections
+# --------------------------------------------------------------------------- #
+
+def list_collections(conn) -> list[dict]:
+    """Collections with `count` (items directly inside) and `total` (distinct items in the
+    collection or any of its subcollections)."""
+    rows = [dict(r) for r in conn.execute(
+        "SELECT c.id, c.name, c.parent_id, COUNT(ic.item_id) AS count FROM collections c "
+        "LEFT JOIN item_collections ic ON ic.collection_id = c.id "
+        "GROUP BY c.id ORDER BY lower(c.name)")]
+    members: dict[int, set[int]] = {r["id"]: set() for r in rows}
+    for item_id, cid in conn.execute("SELECT item_id, collection_id FROM item_collections"):
+        members[cid].add(item_id)
+    children: dict[int, list[int]] = {}
+    for r in rows:
+        if r["parent_id"] in members:
+            children.setdefault(r["parent_id"], []).append(r["id"])
+    totals: dict[int, set[int]] = {}
+
+    def total(cid: int, depth: int = 0) -> set[int]:
+        if cid not in totals:
+            items = set(members[cid])
+            if depth < 100:
+                for child in children.get(cid, []):
+                    items |= total(child, depth + 1)
+            totals[cid] = items
+        return totals[cid]
+
+    for r in rows:
+        r["total"] = len(total(r["id"]))
+    return rows
+
+
+def collection_exists(conn, cid: int) -> bool:
+    return conn.execute("SELECT 1 FROM collections WHERE id = ?", (cid,)).fetchone() is not None
+
+
+def create_collection(conn, name: str, parent_id: int | None) -> int:
+    cur = conn.execute("INSERT INTO collections (name, parent_id) VALUES (?, ?)",
+                       (name.strip(), parent_id))
+    conn.commit()
+    return cur.lastrowid
+
+
+def update_collection(conn, cid: int, name: str | None, parent_id: int | None,
+                      set_parent: bool) -> None:
+    if name is not None:
+        conn.execute("UPDATE collections SET name = ? WHERE id = ?", (name.strip(), cid))
+    if set_parent:
+        # Prevent cycles: the new parent cannot be a descendant of the collection.
+        p = parent_id
+        while p is not None:
+            if p == cid:
+                raise ValueError("A collection cannot be placed inside itself")
+            r = conn.execute("SELECT parent_id FROM collections WHERE id = ?", (p,)).fetchone()
+            p = r["parent_id"] if r else None
+        conn.execute("UPDATE collections SET parent_id = ? WHERE id = ?", (parent_id, cid))
+    conn.commit()
+
+
+def delete_collection(conn, cid: int) -> None:
+    conn.execute("DELETE FROM collections WHERE id = ?", (cid,))
+    conn.commit()
+
+
+def set_collections(conn, item_id: int, cids: list[int]) -> None:
+    # Only add/remove what changed, so the order in which collections were added is kept.
+    wanted = [c for c in dict.fromkeys(cids) if collection_exists(conn, c)]
+    existing = [r[0] for r in conn.execute(
+        "SELECT collection_id FROM item_collections WHERE item_id = ?", (item_id,))]
+    for cid in existing:
+        if cid not in wanted:
+            conn.execute("DELETE FROM item_collections WHERE item_id = ? AND collection_id = ?",
+                         (item_id, cid))
+    for cid in wanted:
+        if cid not in existing:
+            conn.execute("INSERT INTO item_collections VALUES (?, ?)", (item_id, cid))
+
+
+def add_to_collection(conn, cid: int, item_ids: list[int]) -> None:
+    for iid in item_ids:
+        conn.execute("INSERT OR IGNORE INTO item_collections "
+                     "SELECT ?, ? WHERE EXISTS (SELECT 1 FROM items WHERE id = ?)",
+                     (iid, cid, iid))
+    conn.commit()
+
+
+def remove_from_collection(conn, cid: int, item_id: int) -> None:
+    conn.execute("DELETE FROM item_collections WHERE collection_id = ? AND item_id = ?",
+                 (cid, item_id))
+    conn.commit()
+
+
+# --------------------------------------------------------------------------- #
+# Annotations
+# --------------------------------------------------------------------------- #
+
+def _row_to_annotation(row: sqlite3.Row) -> dict:
+    a = dict(row)
+    a["rects"] = json.loads(a["rects"])
+    return a
+
+
+def list_annotations(conn, item_id: int) -> list[dict]:
+    rows = conn.execute("SELECT * FROM annotations WHERE item_id = ? ORDER BY page, id",
+                        (item_id,))
+    return [_row_to_annotation(r) for r in rows]
+
+
+def get_annotation(conn, ann_id: int) -> dict | None:
+    row = conn.execute("SELECT * FROM annotations WHERE id = ?", (ann_id,)).fetchone()
+    return _row_to_annotation(row) if row else None
+
+
+def create_annotation(conn, item_id: int, data: dict) -> int:
+    ts = now()
+    cur = conn.execute(
+        "INSERT INTO annotations (item_id, kind, color, page, rects, text, comment, "
+        "created_at, modified_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        (item_id, data["kind"], data["color"], data["page"], json.dumps(data["rects"]),
+         (data.get("text") or "").strip() or None, (data.get("comment") or "").strip() or None,
+         ts, ts))
+    reindex(conn, item_id)
+    conn.commit()
+    return cur.lastrowid
+
+
+def update_annotation(conn, ann_id: int, changes: dict) -> None:
+    fields = {k: changes[k] for k in ("color", "comment") if k in changes}
+    if "comment" in fields:
+        fields["comment"] = (fields["comment"] or "").strip() or None
+    if not fields:
+        return
+    fields["modified_at"] = now()
+    sets = ", ".join(f"{k} = ?" for k in fields)
+    conn.execute(f"UPDATE annotations SET {sets} WHERE id = ?", [*fields.values(), ann_id])
+    item_id = conn.execute("SELECT item_id FROM annotations WHERE id = ?", (ann_id,)).fetchone()[0]
+    reindex(conn, item_id)
+    conn.commit()
+
+
+def delete_annotation(conn, ann_id: int) -> None:
+    row = conn.execute("SELECT item_id FROM annotations WHERE id = ?", (ann_id,)).fetchone()
+    if row is None:
+        return
+    conn.execute("DELETE FROM annotations WHERE id = ?", (ann_id,))
+    reindex(conn, row["item_id"])
+    conn.commit()
+
+
+
+# --------------------------------------------------------------------------- #
+# Settings (library-wide preferences)
+# --------------------------------------------------------------------------- #
+
+def get_settings(conn) -> dict:
+    return {r["key"]: json.loads(r["value"]) for r in conn.execute("SELECT key, value FROM settings")}
+
+
+def set_settings(conn, values: dict) -> None:
+    for key, value in values.items():
+        conn.execute("INSERT INTO settings (key, value) VALUES (?, ?) "
+                     "ON CONFLICT(key) DO UPDATE SET value = excluded.value", (key, json.dumps(value)))
+    conn.commit()
+
+
+# --------------------------------------------------------------------------- #
+# Reading list
+# --------------------------------------------------------------------------- #
+
+def set_to_read(conn, item_id: int, on: bool) -> None:
+    if on:  # keep the original date if it is already on the list
+        conn.execute("UPDATE items SET to_read_at = COALESCE(to_read_at, ?) WHERE id = ?",
+                     (now(), item_id))
+    else:
+        conn.execute("UPDATE items SET to_read_at = NULL WHERE id = ?", (item_id,))
+
+
+def library_counts(conn) -> dict:
+    row = conn.execute(
+        "SELECT COUNT(*) AS all_items, "
+        "SUM(id NOT IN (SELECT item_id FROM item_collections)) AS unfiled, "
+        "SUM(to_read_at IS NOT NULL) AS to_read FROM items").fetchone()
+    return {"all": row["all_items"], "unfiled": row["unfiled"] or 0, "to_read": row["to_read"] or 0}
+
+
+def is_incomplete(item: dict) -> bool:
+    """Items missing details a reference needs (shown in the overview so they get fixed)."""
+    if not item.get("title") or item["title"] == "New item" or not item.get("authors") or not item.get("year"):
+        return True
+    return item.get("item_type") in ("article", "inproceedings", "incollection") and not item.get("venue")
