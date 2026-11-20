@@ -77,3 +77,26 @@ def vector_paper() -> bytes:
     data = doc.tobytes()
     doc.close()
     return data
+
+
+def bold_label_paper() -> bytes:
+    """A caption whose bold label has no punctuation after it ("Fig. 1 Decay…"), and a
+    paragraph under a drawing that starts "Figure 2 shows…" in plain type."""
+    doc = pymupdf.open()
+    page = doc.new_page()
+    page.insert_textbox(pymupdf.Rect(60, 60, 535, 200), BODY, fontsize=9.5)
+    x0, y0, x1, y1 = 150, 230, 450, 400
+    page.draw_line((x0, y1), (x1, y1), width=1)
+    page.draw_line((x0, y0), (x0, y1), width=1)
+    page.draw_polyline([pymupdf.Point(x0 + t, y1 - 10 - 140 * math.exp(-t / 80)) for t in range(0, x1 - x0, 3)],
+                       color=(0.12, 0.47, 0.71), width=1.5)
+    page.insert_text((280, y1 + 16), "Time (ms)", fontsize=8)
+    page.insert_text((60, 440), "Fig. 1", fontname="hebo", fontsize=9)
+    page.insert_text((88, 440), " Decay of the cochlear signal after a click", fontname="helv", fontsize=9)
+    # A box drawn above a paragraph that mentions a figure: not a caption.
+    page.draw_rect(pymupdf.Rect(150, 500, 450, 600), width=1)
+    page.insert_textbox(pymupdf.Rect(60, 612, 535, 760),
+                        "Figure 2 shows the same signal in a second bird. " + BODY, fontsize=9.5)
+    data = doc.tobytes()
+    doc.close()
+    return data

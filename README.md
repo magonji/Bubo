@@ -206,11 +206,14 @@ Run them inside the container, while Bubo is running if you like:
 ```bash
 docker compose exec bubo python -m app.cli figures                 # papers without figures yet
 docker compose exec bubo python -m app.cli figures --all           # extract every paper's figures again
+docker compose exec bubo python -m app.cli figures --report        # papers without a figure, and why
 docker compose exec bubo python -m app.cli journal-abbreviations   # "Nat. Commun." etc., from Crossref
 ```
 
-The first fills in the figures of papers added before figure extraction existed; new papers get
-theirs automatically. The second asks Crossref for the abbreviated journal name of papers with a
+The first fills in the figures of papers added before figure extraction existed, and looks
+again at papers where an older version of Bubo found none; new papers get theirs
+automatically. `--report` lists the papers that have no figure and the reason: no PDF, not
+looked at yet, an error, or no figures found (for instance a scanned PDF without text). The second asks Crossref for the abbreviated journal name of papers with a
 DOI (new papers get it when they are added); it is shown in the phone list.
 
 ## Licence

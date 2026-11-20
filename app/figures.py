@@ -40,12 +40,20 @@ MAX_FIGURES = 30
 MIN_PIXELS = (300, 200)                  # embedded images smaller than this are ignored
 MAX_ASPECT = 4.0                         # nor are banners and slivers
 MAX_GAP = 80                             # points between a figure and its caption, at most
+# Bumped when detection improves, so that `python -m app.cli figures` looks again at papers
+# processed by an older version (see extract_item).
+VERSION = 2
 
 # "Figure 1.", "Fig. 2 |", "FIG. 3:", "Figure S4 –". A sentence such as "Figure 1 shows…"
 # does not match, because the number must be followed by punctuation or the end of a line.
 CAPTION_RE = re.compile(
     r"^\s*(?:supplementary\s+|extended\s+data\s+)?(fig(?:ure)?\.?)\s*(S?\d+(?:\.\d+)?[a-z]?)\s*(?:[.:|—–-]|$)",
     re.I | re.M)
+# "Fig. 1 Schematic of…": no punctuation after the number. Accepted only when the label is
+# in bold, as caption labels almost always are, so that "Fig. 1 shows…" is not a caption.
+LOOSE_CAPTION_RE = re.compile(
+    r"^\s*(?:supplementary\s+|extended\s+data\s+)?(fig(?:ure)?\.?)\s*(S?\d+(?:\.\d+)?[a-z]?)(?=\s)", re.I)
+BOLD_FONT = re.compile(r"bold|black|heavy|semibold|demi", re.I)
 
 
 def root() -> Path:
@@ -96,10 +104,44 @@ def _grow(seed: pymupdf.Rect, pool: list[pymupdf.Rect], gap: float) -> pymupdf.R
     return region
 
 
-def _caption_figures(page, graphics: list[pymupdf.Rect], text_blocks: list) -> list[Found]:
+def _bold_label_blocks(page) -> list[pymupdf.Rect]:
+    """Text blocks that start with a figure label set in bold."""
+    found = []
+    for block in page.get_text("dict")["blocks"]:
+        spans = [s for line in block.get("lines", []) for s in line["spans"] if s["text"].strip()]
+        if not spans:
+            continue
+        m = LOOSE_CAPTION_RE.match("".join(s["text"] for s in spans))
+        if not m:
+            continue
+        # Every span that makes up the label must be bold.
+        covered, bold = 0, True
+        for s in spans:
+            if covered >= m.end():
+                break
+            bold = bold and bool(s["flags"] & 16 or BOLD_FONT.search(s["font"]))
+            covered += len(s["text"])
+        if bold:
+            found.append(pymupdf.Rect(block["bbox"]))
+    return found
+
+
+def _caption_match(block, bold_labels: list[pymupdf.Rect]):
+    m = CAPTION_RE.match(block[4])
+    if m or not bold_labels:
+        return m
+    m = LOOSE_CAPTION_RE.match(block[4])
+    r = pymupdf.Rect(block[:4])
+    if m and any((r & b).get_area() > 0.8 * min(r.get_area(), b.get_area()) for b in bold_labels):
+        return m
+    return None
+
+
+def _caption_figures(page, graphics: list[pymupdf.Rect], text_blocks: list,
+                     bold_labels: list[pymupdf.Rect]) -> list[Found]:
     """Figures identified by their captions on one page."""
     width = page.rect.width
-    captions = [b for b in text_blocks if CAPTION_RE.match(b[4])]
+    captions = [b for b in text_blocks if _caption_match(b, bold_labels)]
     captions.sort(key=lambda b: b[1])
     found = []
     for n, cap in enumerate(captions):
@@ -140,13 +182,13 @@ def _caption_figures(page, graphics: list[pymupdf.Rect], text_blocks: list) -> l
             for b in text_blocks:
                 r = pymupdf.Rect(b[:4])
                 if b is not cap and near.intersects(r) and around.contains(r) \
-                        and not CAPTION_RE.match(b[4]) and not _is_prose(b) \
+                        and not _caption_match(b, bold_labels) and not _is_prose(b) \
                         and not r.intersects(crect):
                     region |= r
         region = (region + (-6, -6, 6, 6)) & page.rect
         if region.width < 60 or region.height < 40 or region.get_area() < 0.015 * page.rect.get_area():
             continue
-        m = CAPTION_RE.match(cap[4])
+        m = _caption_match(cap, bold_labels)
         found.append(Found(page.number, region, "caption", f"Figure {m.group(2)}",
                            _clean_caption(cap[4])))
     return found
@@ -180,7 +222,7 @@ def find_figures(doc: pymupdf.Document) -> list[Found]:
         graphics += [pymupdf.Rect(i["bbox"]) & prect for i in images]
         text_blocks = [b for b in page.get_text("blocks") if b[6] == 0 and b[4].strip()]
 
-        on_page = _caption_figures(page, graphics, text_blocks)
+        on_page = _caption_figures(page, graphics, text_blocks, _bold_label_blocks(page))
         # Embedded images that no captioned figure contains.
         for i in images:
             r = pymupdf.Rect(i["bbox"]) & prect
@@ -237,8 +279,8 @@ def remove_files(item_id: int) -> None:
 def extract_item(conn, item_id: int, force: bool = False) -> int | None:
     """Extract (or re-use) the figures of one paper. Returns how many were found, or None
     if there was nothing to do."""
-    row = conn.execute("SELECT file_name, file_hash, figures_hash, figures_status FROM items "
-                       "WHERE id = ?", (item_id,)).fetchone()
+    row = conn.execute("SELECT file_name, file_hash, figures_hash, figures_status, figures_version "
+                       "FROM items WHERE id = ?", (item_id,)).fetchone()
     if row is None:
         return None
     if not row["file_name"]:
@@ -251,7 +293,8 @@ def extract_item(conn, item_id: int, force: bool = False) -> int | None:
     path = storage.abs_path(row["file_name"])
     data = path.read_bytes()
     pdf_hash = row["file_hash"] or hashlib.sha256(data).hexdigest()
-    if not force and row["figures_hash"] == pdf_hash and row["figures_status"] in ("done", "none"):
+    if not force and row["figures_hash"] == pdf_hash and row["figures_status"] in ("done", "none") \
+            and (row["figures_version"] or 0) >= VERSION:
         return None
 
     out = item_dir(item_id) / pdf_hash[:16]
@@ -268,8 +311,8 @@ def extract_item(conn, item_id: int, force: bool = False) -> int | None:
     conn.executemany(
         "INSERT INTO figures (item_id, pdf_hash, idx, page, kind, label, caption, width, height, "
         "thumb_width, thumb_height) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)", rows)
-    conn.execute("UPDATE items SET figures_hash = ?, figures_status = ?, cover_figure_id = NULL "
-                 "WHERE id = ?", (pdf_hash, "done" if rows else "none", item_id))
+    conn.execute("UPDATE items SET figures_hash = ?, figures_status = ?, figures_version = ?, "
+                 "cover_figure_id = NULL WHERE id = ?", (pdf_hash, "done" if rows else "none", VERSION, item_id))
     conn.commit()
     # Figures of an earlier PDF of the same paper.
     for d in item_dir(item_id).iterdir():

@@ -789,3 +789,47 @@ def test_paper_address_serves_the_app(client):
     r = client.get("/paper/123")
     assert r.status_code == 200 and "<title>Bubo</title>" in r.text and "/static/paper.js" in r.text
     assert client.get("/paper/not-a-number").status_code == 422
+
+
+def test_bold_figure_labels_without_punctuation():
+    from app import figures
+    from tests.sample_pdfs import bold_label_paper
+    with pymupdf.open(stream=bold_label_paper(), filetype="pdf") as doc:
+        found = figures.find_figures(doc)
+    assert [(f.kind, f.label) for f in found] == [("caption", "Figure 1")]
+    assert found[0].caption.startswith("Fig. 1 Decay")
+    assert found[0].rect.contains(pymupdf.Rect(150, 230, 450, 400)) and found[0].rect.y1 < 432
+
+
+def test_figures_report_and_newer_versions(client, capsys):
+    from app import cli, db, figures
+    from tests.sample_pdfs import raster_paper
+    login(client)
+    for it in client.get("/api/items").json():
+        client.delete(f"/api/items/{it['id']}")
+    with_figs = client.post("/api/items/upload", files=[("files", ("a.pdf", raster_paper(), "application/pdf"))]).json()["results"][0]["id"]
+    plain = client.post("/api/items/upload", files=[("files", ("b.pdf", make_pdf("Only words"), "application/pdf"))]).json()["results"][0]["id"]
+    no_pdf = client.post("/api/items", json={"title": "Paper without a PDF"}).json()["id"]
+    figures.wait()
+    capsys.readouterr()
+    cli.main(["figures", "--report"])
+    out = capsys.readouterr().out
+    assert "1 of 3 papers have figures." in out
+    assert "No PDF attached" in out and f"[{no_pdf}] Paper without a PDF" in out
+    assert "No figures found in the PDF (1)" in out and f"[{plain}]" in out
+    assert f"[{with_figs}]" not in out
+
+    # Papers where an older version found nothing are looked at again.
+    conn = db.connect()
+    conn.execute("UPDATE items SET figures_version = 1 WHERE id = ?", (plain,))
+    conn.commit()
+    conn.close()
+    cli.main(["figures", "--report"])
+    assert "by an older version" in capsys.readouterr().out
+    cli.main(["figures"])
+    out = capsys.readouterr().out
+    assert "Done: 0 figures from 1 paper." in out
+    cli.main(["figures"])
+    assert "Every paper already has its figures." in capsys.readouterr().out
+    for i in (with_figs, plain, no_pdf):
+        client.delete(f"/api/items/{i}")

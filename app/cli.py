@@ -3,6 +3,7 @@
     docker compose exec bubo python -m app.cli figures            # papers without figures yet
     docker compose exec bubo python -m app.cli figures --all      # extract every paper again
     docker compose exec bubo python -m app.cli figures --item 42
+    docker compose exec bubo python -m app.cli figures --report   # papers without a figure, and why
     docker compose exec bubo python -m app.cli journal-abbreviations
 
 They can run while Bubo is running.
@@ -14,6 +15,15 @@ import sys
 import time
 
 from . import db, figures, metadata
+
+REASONS = {
+    "no-pdf": "No PDF attached: add one, or use Find PDF",
+    None: "Not looked at yet: run 'python -m app.cli figures'",
+    "pending": "Being extracted now, or interrupted: run 'python -m app.cli figures'",
+    "error": "Extraction failed: run 'python -m app.cli figures' to try again and see the error",
+    "none": "No figures found in the PDF",
+    "old": "No figures found by an older version: run 'python -m app.cli figures' to look again",
+}
 from .config import settings
 
 
@@ -27,8 +37,34 @@ def _drop_privileges() -> None:
             os.setuid(st.st_uid)
 
 
+def figures_report(conn) -> None:
+    rows = conn.execute(
+        "SELECT i.id, i.title, i.venue, i.file_name, i.figures_status, i.figures_version FROM items i "
+        "WHERE NOT EXISTS (SELECT 1 FROM figures f WHERE f.item_id = i.id) ORDER BY i.id").fetchall()
+    total = conn.execute("SELECT COUNT(*) FROM items").fetchone()[0]
+    groups: dict = {}
+    for r in rows:
+        if not r["file_name"]:
+            key = "no-pdf"
+        elif r["figures_status"] == "none" and (r["figures_version"] or 0) < figures.VERSION:
+            key = "old"
+        else:
+            key = r["figures_status"]
+        groups.setdefault(key, []).append(r)
+    print(f"{total - len(rows)} of {total} papers have figures.")
+    for key in ("no-pdf", None, "pending", "error", "old", "none"):
+        if key not in groups:
+            continue
+        print(f"\n{REASONS[key]} ({len(groups[key])}):")
+        for r in groups[key]:
+            venue = f" ({r['venue']})" if r["venue"] else ""
+            print(f"  [{r['id']}] {(r['title'] or '(untitled)')[:80]}{venue}")
+
+
 def cmd_figures(args) -> None:
     conn = db.connect()
+    if args.report:
+        return figures_report(conn)
     if args.item:
         ids = [args.item]
     elif args.all:
@@ -36,7 +72,9 @@ def cmd_figures(args) -> None:
     else:
         ids = [r[0] for r in conn.execute(
             "SELECT id FROM items WHERE file_name IS NOT NULL AND (figures_status IS NULL "
-            "OR figures_status IN ('pending', 'error') OR figures_hash IS NOT file_hash) ORDER BY id")]
+            "OR figures_status IN ('pending', 'error') OR figures_hash IS NOT file_hash "
+            "OR (figures_status = 'none' AND IFNULL(figures_version, 0) < ?)) ORDER BY id",
+            (figures.VERSION,))]
     if not ids:
         print("Every paper already has its figures.")
         return
@@ -85,6 +123,7 @@ def main(argv=None) -> None:
     p = sub.add_parser("figures", help="extract the figures of papers that do not have them yet")
     p.add_argument("--all", action="store_true", help="extract the figures of every paper again")
     p.add_argument("--item", type=int, help="only this paper (its id)")
+    p.add_argument("--report", action="store_true", help="list the papers without a figure, and why")
     p.set_defaults(func=cmd_figures)
     p = sub.add_parser("journal-abbreviations", help="fetch abbreviated journal names from Crossref")
     p.set_defaults(func=cmd_journal_abbreviations)

@@ -172,6 +172,7 @@ def init_db() -> None:
         ("figures_status", "TEXT"),       # NULL | pending | done | none | error
         ("figures_hash", "TEXT"),         # hash of the PDF the figures come from
         ("cover_figure_id", "INTEGER"),   # chosen thumbnail (NULL: the first figure)
+        ("figures_version", "INTEGER"),   # figures.VERSION that produced them
     ]:
         if column not in columns:
             conn.execute(f"ALTER TABLE items ADD COLUMN {column} {kind}")
@@ -251,6 +252,7 @@ def _row_to_item(row: sqlite3.Row, tags: list[str], collections: list[int],
     item["supplementary"] = supplementary
     # The thumbnail: the figure chosen as cover, otherwise the first one.
     item.pop("figures_hash", None)
+    item.pop("figures_version", None)
     cover = next((f for f in figures if f["id"] == item["cover_figure_id"]), figures[0] if figures else None)
     item["figure_count"] = len(figures)
     item["cover"] = cover and {
