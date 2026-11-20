@@ -151,6 +151,18 @@ If you use nginx, raise `client_max_body_size` (e.g. `200m`) so that large PDFs 
 | `BUBO_SESSION_DAYS` | Session length in days (default 30). |
 | `BUBO_SECRET` | Optional session key; otherwise one is generated in `data/.secret_key`. |
 
+## Licence
+
+Bubo is free software, released under the [GNU Affero General Public License v3.0](LICENSE)
+(AGPL-3.0). You may use, study, change and share it. If you run a modified version for other
+people over a network, you must offer them its source code; the "Source code" link in the menu
+points to this repository, so change it if you publish a modified copy elsewhere.
+
+Bundled third-party components keep their own licences: [PDF.js](https://github.com/mozilla/pdf.js)
+(Apache-2.0, `app/static/vendor/pdfjs/LICENSE`) and the Fraunces font (SIL Open Font License,
+`app/static/fonts/Fraunces-OFL.txt`). Bubo uses [PyMuPDF](https://pymupdf.readthedocs.io/),
+which is also licensed under the AGPL-3.0.
+
 ## Development
 
 ```bash
