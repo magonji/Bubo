@@ -72,7 +72,8 @@ function createPaperView(root, mode) {
     const doiUrl = i.doi ? `https://doi.org/${encodeURIComponent(i.doi).replace(/%2F/g, "/")}` : "";
     const date = (d) => new Date(d).toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" });
     const details = [
-      i.venue && ["Journal", esc(i.venue)],
+      i.venue && [{ inproceedings: "Conference", incollection: "Book", preprint: "Server", phdthesis: "University",
+        mastersthesis: "University", techreport: "Institution" }[i.item_type] || "Journal", esc(i.venue)],
       i.year && ["Year", i.year],
       i.volume && ["Volume", esc([i.volume, i.issue && `(${i.issue})`, i.pages && `, ${i.pages}`].filter(Boolean).join(""))],
       !i.volume && i.pages && ["Pages", esc(i.pages)],
