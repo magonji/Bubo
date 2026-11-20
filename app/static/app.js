@@ -31,6 +31,9 @@ const ICONS = {
   settings: '<circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"/>',
   "file-search": '<path d="M13 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h4"/><path d="M13 3v5h5v2"/><circle cx="16.5" cy="16.5" r="3"/><path d="M21 21l-2.4-2.4"/>',
   "rows-1": '<path d="M4 6h16M4 10h16M4 14h16M4 18h16"/>',
+  search: '<circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/>',
+  grid: '<rect x="4" y="4" width="6.5" height="6.5" rx="1.2"/><rect x="13.5" y="4" width="6.5" height="6.5" rx="1.2"/><rect x="4" y="13.5" width="6.5" height="6.5" rx="1.2"/><rect x="13.5" y="13.5" width="6.5" height="6.5" rx="1.2"/>',
+  list: '<rect x="4" y="5" width="5" height="5" rx="1"/><rect x="4" y="14" width="5" height="5" rx="1"/><path d="M12 7.5h8M12 16.5h8"/>',
   "rows-2": '<path d="M4 5h16M4 8.5h10M4 13h16M4 16.5h10"/>',
   "arrow-up": '<path d="M12 19V5M6 11l6-6 6 6"/>',
   "arrow-down": '<path d="M12 5v14M6 13l6 6 6-6"/>',
@@ -419,6 +422,7 @@ $("#detail-back").addEventListener("click", () => hideDetailPane());
 window.addEventListener("popstate", () => hideDetailPane(true));
 narrow.addEventListener("change", () => {
   fitPlaceholder();
+  renderCards();
   if (!narrow.matches) { closeDrawer(); hideDetailPane(); }
 });
 
@@ -531,6 +535,7 @@ function renderItems() {
     </tr>` : ""}`;
   }).join("");
   $("#items-table").classList.toggle("with-snippets", state.items.some((i) => i.match));
+  renderCards();
   const queue = state.view.type === "toread";
   $("#toread-order").classList.toggle("hidden", !queue);
   if (queue) {
@@ -538,6 +543,98 @@ function renderItems() {
     $("#toread-order-select").value = sort.startsWith("to_read") ? sort : "";
   }
 }
+
+// --------------------------------------------------------------------------
+// Phones: the library as a gallery of cards or a list with thumbnails
+// --------------------------------------------------------------------------
+const MOBILE_VIEW_KEY = "mobileView";
+state.mobileView = (() => { try { return localStorage.getItem(MOBILE_VIEW_KEY); } catch { return null; } })() === "list"
+  ? "list" : "gallery";
+
+// A generated cover for papers without figures: the colour comes from the journal's name
+// (fixed saturation and lightness keep white text above 4.5:1 for every hue).
+function journalHue(name) {
+  let h = 0;
+  for (const ch of name) h = (h * 31 + ch.codePointAt(0)) >>> 0;
+  return h % 360;
+}
+
+function thumbHTML(i) {
+  if (i.cover) {
+    return `<div class="tile"><img src="${esc(i.cover.url)}" alt="" loading="lazy" decoding="async"
+      width="${i.cover.width}" height="${i.cover.height}"></div>`;
+  }
+  const venue = [i.venue, i.year].filter(Boolean).join(" · ");
+  return `<div class="gen-cover" style="--h:${journalHue(i.venue || i.title || "")}">
+    <span class="gc-venue">${esc(venue)}</span><span class="gc-title">${esc(i.title || "(untitled)")}</span></div>`;
+}
+
+function cardHTML(i) {
+  const authors = authorsShort(i.authors);
+  const title = esc(i.title) || "(untitled)";
+  const snippet = i.match ? `<div class="c-snippet">${highlight(i.match.snippet)}</div>` : "";
+  const onList = i.to_read ? `<span class="sr-only">, on your reading list</span>` : "";
+  if (state.mobileView === "list") {
+    const meta = [authors, i.venue_short || i.venue, i.year].filter(Boolean).join(" · ");
+    return `<a class="m-row" href="/paper/${i.id}" data-id="${i.id}">
+      <div class="thumb thumb-sm">${thumbHTML(i)}</div>
+      <div class="r-text"><div class="c-title">${title}${onList}</div>
+        <div class="c-meta">${esc(meta)}</div>${snippet}</div>
+      ${i.to_read ? `<span class="r-mark" aria-hidden="true">${icon("bookmark")}</span>` : ""}
+    </a>`;
+  }
+  return `<a class="card" href="/paper/${i.id}" data-id="${i.id}">
+    <div class="thumb">${thumbHTML(i)}
+      ${i.to_read ? `<span class="badge badge-tl" aria-hidden="true">${icon("bookmark")}</span>` : ""}
+      ${i.has_file ? `<span class="badge badge-br" aria-hidden="true">PDF</span>` : ""}
+    </div>
+    <div class="c-title">${title}${onList}</div>
+    <div class="c-meta">${esc([authors, i.year].filter(Boolean).join(" · "))}</div>
+    ${i.venue ? `<div class="c-venue">${esc(i.venue)}</div>` : ""}${snippet}
+  </a>`;
+}
+
+const SORT_CHOICES = [["year", "Newest first"], ["year_asc", "Oldest first"], ["added", "Recently added"],
+  ["title", "Title"], ["authors", "Author"]];
+const QUEUE_CHOICES = [["to_read", "Longest on the list"], ["to_read_desc", "Latest on the list"]];
+
+let figurePoll;
+function renderCards() {
+  const box = $("#cards");
+  clearTimeout(figurePoll);
+  if (!narrow.matches) { box.innerHTML = ""; return; }
+  box.className = `cards ${state.mobileView}`;
+  box.innerHTML = state.items.map(cardHTML).join("");
+  $$(".view-switch [data-mode]").forEach((b) => b.setAttribute("aria-pressed", String(b.dataset.mode === state.mobileView)));
+  const choices = state.view.type === "toread" ? [...SORT_CHOICES, ...QUEUE_CHOICES] : SORT_CHOICES;
+  const sort = sortKey();
+  const select = $("#m-sort");
+  select.innerHTML = choices.map(([v, label]) => `<option value="${v}">${label}</option>`).join("") +
+    (choices.some(([v]) => v === sort) ? "" : `<option value="${esc(sort)}">Custom order</option>`);
+  select.value = sort;
+  $("#m-toread").setAttribute("aria-pressed", String(state.view.type === "toread"));
+  // Figures are extracted in the background after a PDF arrives: check back for them.
+  if (state.items.some((i) => i.figures_status === "pending")) figurePoll = setTimeout(loadItems, 4000);
+}
+
+$("#cards").addEventListener("click", (e) => {
+  const a = e.target.closest("a[data-id]");
+  if (!a || e.metaKey || e.ctrlKey || e.shiftKey) return;
+  e.preventDefault();
+  const item = state.items.find((i) => i.id === Number(a.dataset.id));
+  if (!item) return;
+  select(item);
+  showDetailPane();
+});
+$$(".view-switch [data-mode]").forEach((b) => b.addEventListener("click", () => {
+  state.mobileView = b.dataset.mode;
+  try { localStorage.setItem(MOBILE_VIEW_KEY, state.mobileView); } catch {}
+  renderCards();
+}));
+$("#m-sort").addEventListener("change", (e) => { setSortKey(e.target.value); loadItems(); });
+$("#m-toread").addEventListener("click", () =>
+  setView({ type: state.view.type === "toread" ? "all" : "toread" }));
+$("#m-collections").addEventListener("click", () => openDrawer());
 
 $("#items-head").addEventListener("click", (e) => {
   const th = e.target.closest("th[data-sort]");
