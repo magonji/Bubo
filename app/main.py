@@ -227,7 +227,7 @@ def me():
 
 @app.get("/api/items", dependencies=[Auth])
 def list_items(conn: Conn, q: str | None = None, collection: int | None = None,
-               tag: str | None = None, unfiled: bool = False, sort: str = "added",
+               tag: str | None = None, unfiled: bool = False, sort: str = "year",
                subcollections: bool = False, to_read: bool = False):
     return db.list_items(conn, q=q, collection_id=collection, tag=tag, unfiled=unfiled, sort=sort,
                          subcollections=subcollections, to_read=to_read)
@@ -480,7 +480,7 @@ def overview(conn: Conn):
     """Shown in the item pane when nothing is selected."""
     items = db.list_items(conn, sort="added")
     incomplete = [i for i in items if db.is_incomplete(i)]
-    to_read = db.list_items(conn, to_read=True, sort="to_read")
+    to_read = db.list_items(conn, to_read=True, sort="year")
     return {"recent": items[:5], "to_read": to_read[:5], "to_read_total": len(to_read),
             "incomplete": incomplete[:5], "incomplete_total": len(incomplete)}
 

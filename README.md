@@ -26,7 +26,8 @@ them from the browser.
 - **Find PDF** for papers without one (the dimmed icon in the PDF column, or the button in the
   item pane): looks on arXiv, Unpaywall (with `BUBO_CONTACT_EMAIL` set) and the publisher's page.
 - **Library table** with a comfortable layout (authors and venue under the title) or a compact
-  one, sortable columns including the date added, a reading-list column, and icons for notes
+  one, papers listed newest first (by publication year) and sortable by any column,
+  including the date added, a reading-list column, and icons for notes
   and PDFs. Shift-click selects a range and Cmd/Ctrl-click adds or removes papers, for bulk
   actions or for dragging several papers onto a collection at once. With nothing selected, the
   item pane shows recently added papers, the reading list and papers with incomplete metadata.
@@ -34,9 +35,9 @@ them from the browser.
   in its pane, or drag papers onto "Reading list" in the sidebar. Papers on it are marked in the
   library list. New papers can go straight onto it: turn on "Put new papers on the reading
   list" in Settings (it also sets the default of the "Add to reading list" box in the upload
-  dialog, which can be changed for a single upload). The
-  list works as a queue, ordered by when each paper was added (oldest or newest first), or by
-  any column.
+  dialog, which can be changed for a single upload). Like every list it shows the newest
+  papers first; it can also work as a queue, ordered by when each paper was put on it
+  (oldest or newest first), or be sorted by any column.
 - Nested **collections**, **tags** and **notes**. Drag papers onto a collection to add them;
   drag a collection onto another to move it inside, or onto the "Collections" heading to move
   it back to the top level. "Include subcollections" makes a collection also list the papers

@@ -109,8 +109,9 @@ ITEM_TYPES = [
 SORTS = {
     "added": "i.added_at DESC, i.id DESC",
     "added_asc": "i.added_at ASC, i.id ASC",
-    "year": "i.year DESC NULLS LAST, i.title",
-    "year_asc": "i.year ASC NULLS LAST, i.title",
+    # Publication year, the default order: newest papers first, then the most recently added.
+    "year": "i.year DESC NULLS LAST, i.added_at DESC, i.id DESC",
+    "year_asc": "i.year ASC NULLS LAST, i.added_at ASC, i.id ASC",
     "title": "lower(i.title) ASC",
     "title_desc": "lower(i.title) DESC",
     "authors": "lower(json_extract(i.authors, '$[0].family')) ASC NULLS LAST",
@@ -274,7 +275,7 @@ def get_item_file(conn, item_id: int) -> tuple[str | None, str | None]:
 
 
 def list_items(conn, q: str | None = None, collection_id: int | None = None,
-               tag: str | None = None, unfiled: bool = False, sort: str = "added",
+               tag: str | None = None, unfiled: bool = False, sort: str = "year",
                ids: list[int] | None = None, subcollections: bool = False,
                to_read: bool = False) -> list[dict]:
     where, params = [], []
@@ -308,7 +309,7 @@ def list_items(conn, q: str | None = None, collection_id: int | None = None,
     sql = f"SELECT i.*, {_ANN_COUNT} FROM items i"
     if where:
         sql += " WHERE " + " AND ".join(where)
-    sql += " ORDER BY " + SORTS.get(sort, SORTS["added"])
+    sql += " ORDER BY " + SORTS.get(sort, SORTS["year"])
     rows = conn.execute(sql, params).fetchall()
     tags, cols, supp = _relations(conn, [r["id"] for r in rows])
     items = [_row_to_item(r, tags[r["id"]], cols[r["id"]], supp[r["id"]]) for r in rows]

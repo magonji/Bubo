@@ -61,11 +61,11 @@ const TYPES = {
 const state = {
   items: [], collections: [], tags: [],
   view: { type: "all" },          // all | unfiled | collection | tag
-  q: "", sort: "added", selected: null, expanded: new Set(),
+  q: "", sort: "year", selected: null,   // newest papers first expanded: new Set(),
   selectedIds: new Set(), anchor: null,        // multiple selection (Shift / Cmd / Ctrl)
   density: "comfortable",
   settings: { include_subcollections: false, new_items_to_read: false },
-  sortToRead: "to_read",
+  sortToRead: "year",
 };
 const sortKey = () => (state.view.type === "toread" ? state.sortToRead : state.sort);
 function setSortKey(value) {
