@@ -4,3 +4,5 @@ data/
 .git/
 tests/
 __pycache__/
+docs/
+.github/

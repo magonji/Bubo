@@ -326,17 +326,17 @@ footer a { color: var(--muted); }
       </div>
       <div class="steps">
         <ol class="how">
-          <li><h3>Get the code</h3><p>Clone the repository onto your server.</p></li>
-          <li><h3>Configure it</h3><p>Copy <code>.env.example</code> to <code>.env</code>, then set <code>BUBO_PASSWORD</code> and <code>BUBO_DATA_DIR</code>, the folder that will hold the library. The folder must already exist.</p></li>
-          <li><h3>Start it</h3><p>Build and start the container, then open <code>http://localhost:2826</code>. To reach it from elsewhere, put it behind an HTTPS reverse proxy such as Caddy.</p></li>
+          <li><h3>Download two files</h3><p><code>docker-compose.yml</code> and the example settings. The image itself is ready-built for x86-64 and ARM servers.</p></li>
+          <li><h3>Configure it</h3><p>In <code>.env</code>, set <code>BUBO_PASSWORD</code> and <code>BUBO_DATA_DIR</code>, the folder that will hold the library. The folder must already exist.</p></li>
+          <li><h3>Start it</h3><p>Docker downloads the image and starts it. Then open <code>http://localhost:2826</code>. To reach it from elsewhere, put it behind an HTTPS reverse proxy such as Caddy.</p></li>
         </ol>
         <div class="code">
           <button class="copy-btn" type="button" data-copy="install"><svg class="i"><use href="#i-copy"/></svg><span>Copy</span></button>
-<pre id="install-cmds"><span class="p">$ </span>git clone https://github.com/magonji/Bubo.git
-<span class="p">$ </span>cd Bubo
-<span class="p">$ </span>cp .env.example .env
+<pre id="install-cmds"><span class="p">$ </span>mkdir bubo && cd bubo
+<span class="p">$ </span>curl -fsSLO https://raw.githubusercontent.com/magonji/Bubo/main/docker-compose.yml
+<span class="p">$ </span>curl -fsSL https://raw.githubusercontent.com/magonji/Bubo/main/.env.example -o .env
 <span class="c"># edit .env: BUBO_PASSWORD, BUBO_DATA_DIR</span>
-<span class="p">$ </span>docker compose up -d --build</pre>
+<span class="p">$ </span>docker compose up -d</pre>
         </div>
       </div>
       <p class="center" style="margin-top:32px;color:var(--muted)">External disks, permissions, HTTPS and every setting are covered in the <a href="https://github.com/magonji/Bubo#readme">README</a>.</p>

@@ -56,13 +56,27 @@ selected annotation and `Esc` closes it.
 
 ## Deploying with Docker
 
+The image is built by GitHub Actions and published as `ghcr.io/magonji/bubo`, for both
+x86-64 and ARM (such as a Raspberry Pi), so the server needs only two files:
+
 ```bash
-cp .env.example .env              # set BUBO_PASSWORD and BUBO_DATA_DIR
+mkdir bubo && cd bubo
+curl -fsSLO https://raw.githubusercontent.com/magonji/Bubo/main/docker-compose.yml
+curl -fsSL https://raw.githubusercontent.com/magonji/Bubo/main/.env.example -o .env
+nano .env                         # set BUBO_PASSWORD and BUBO_DATA_DIR
 mkdir -p /path/to/your/data       # the data folder must exist (see below)
-docker compose up -d --build
+docker compose up -d
 ```
 
 Open `http://localhost:2826`.
+
+**Updating:** `docker compose pull && docker compose up -d`. The `latest` tag follows the main
+branch; to stay on a particular release, change it in `docker-compose.yml` to a version such
+as `ghcr.io/magonji/bubo:1.0`.
+
+To build the image yourself instead (for example after changing the code), clone the
+repository, replace `image:` with `build: .` in `docker-compose.yml` and run
+`docker compose up -d --build`.
 
 ### Where your data lives
 

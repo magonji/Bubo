@@ -1,6 +1,8 @@
 services:
   bubo:
-    build: .
+    # Built and published by GitHub Actions (.github/workflows/docker.yml).
+    # To build it yourself instead, replace this line with "build: .".
+    image: ghcr.io/magonji/bubo:latest
     container_name: bubo
     restart: unless-stopped
     env_file: .env
