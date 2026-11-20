@@ -3,6 +3,8 @@
 A self-hosted reference manager: your papers and PDFs live on your own server, and you manage
 them from the browser.
 
+**Website, with screenshots: [magonji.github.io/Bubo](https://magonji.github.io/Bubo/)**
+
 ## Features
 
 - **Add papers** with the **+ Add** button: one box accepts a DOI (or doi.org link), an arXiv ID,
