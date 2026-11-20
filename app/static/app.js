@@ -24,6 +24,8 @@ const ICONS = {
   refresh: '<path d="M20 11a8 8 0 0 0-14.6-4.5L4 8M4 4v4h4M4 13a8 8 0 0 0 14.6 4.5L20 16M20 20v-4h-4"/>',
   trash: '<path d="M4 7h16M10 11v6M14 11v6M6 7l1 12a2 2 0 0 0 2 2h6a2 2 0 0 0 2-2l1-12M9 7V4h6v3"/>',
   menu: '<path d="M4 7h16M4 12h16M4 17h16"/>',
+  sidebar: '<rect x="3" y="4" width="18" height="16" rx="2"/><path d="M9 4v16"/>',
+  "arrow-left": '<path d="M19 12H5M11 6l-6 6 6 6"/>',
   code: '<path d="M16 18l6-6-6-6M8 6l-6 6 6 6"/>',
   "log-out": '<path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4M16 17l5-5-5-5M21 12H9"/>',
   settings: '<circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"/>',
@@ -160,6 +162,7 @@ async function refresh() {
 
 // The item pane: one item, several (bulk actions) or none (library overview).
 function renderSelection() {
+  if (!state.selectedIds.size) hideDetailPane();
   $$("#items tr").forEach((tr) => tr.classList.toggle("selected", state.selectedIds.has(Number(tr.dataset.id))));
   if (state.selectedIds.size > 1) return renderMulti();
   renderDetail(state.items.find((i) => i.id === state.selected) || null);
@@ -371,7 +374,52 @@ function setView(view) {
   state.view = view;
   renderSidebar();
   loadItems();
+  closeDrawer();
 }
+
+// --------------------------------------------------------------------------
+// Narrow screens (phones): one pane at a time. The sidebar is a drawer and the
+// item pane covers the list; the back button (or the browser's) returns to it.
+// --------------------------------------------------------------------------
+const narrow = window.matchMedia("(max-width: 760px)");
+const TOUCH = window.matchMedia("(hover: none)").matches;
+const SEARCH_PLACEHOLDER = $("#search").placeholder;
+const fitPlaceholder = () => { $("#search").placeholder = narrow.matches ? "Search your library" : SEARCH_PLACEHOLDER; };
+fitPlaceholder();
+
+function openDrawer() {
+  document.body.classList.add("show-side");
+  $("#side-backdrop").hidden = false;
+  $("#side-btn").setAttribute("aria-expanded", "true");
+}
+function closeDrawer() {
+  if (!document.body.classList.contains("show-side")) return;
+  document.body.classList.remove("show-side");
+  $("#side-backdrop").hidden = true;
+  $("#side-btn").setAttribute("aria-expanded", "false");
+}
+$("#side-btn").addEventListener("click", () =>
+  document.body.classList.contains("show-side") ? closeDrawer() : openDrawer());
+$("#side-backdrop").addEventListener("click", closeDrawer);
+
+function showDetailPane() {
+  if (!narrow.matches || document.body.classList.contains("show-detail")) return;
+  $("#detail-back-label").textContent = $("#view-title").textContent || "Library";
+  document.body.classList.add("show-detail");
+  $("#detail").scrollTop = 0;
+  history.pushState({ bubo: "detail" }, "");
+}
+function hideDetailPane(fromHistory = false) {
+  if (!document.body.classList.contains("show-detail")) return;
+  document.body.classList.remove("show-detail");
+  if (!fromHistory && history.state?.bubo === "detail") history.back();
+}
+$("#detail-back").addEventListener("click", () => hideDetailPane());
+window.addEventListener("popstate", () => hideDetailPane(true));
+narrow.addEventListener("change", () => {
+  fitPlaceholder();
+  if (!narrow.matches) { closeDrawer(); hideDetailPane(); }
+});
 
 // --------------------------------------------------------------------------
 // Item list
@@ -538,6 +586,7 @@ $("#items").addEventListener("click", (e) => {
     return renderSelection();
   }
   select(item);
+  showDetailPane();
 });
 $("#items").addEventListener("dblclick", (e) => {
   const tr = e.target.closest("tr");
@@ -1210,8 +1259,8 @@ function openUploadDialog(files = [], collectionId = currentCollection()) {
     <div class="add-or">or add PDFs</div>
     <div class="dropzone" id="dropzone" role="button" tabindex="0" aria-describedby="dropzone-hint">
       ${icon("upload")}
-      <strong>Drag and drop PDFs here</strong>
-      <span id="dropzone-hint" class="muted">or click to choose files</span>
+      ${TOUCH ? "<strong>Choose PDFs</strong>" : "<strong>Drag and drop PDFs here</strong>"}
+      <span id="dropzone-hint" class="muted">${TOUCH ? "Tap to pick files from your device" : "or click to choose files"}</span>
       <input type="file" id="upload-input" accept="application/pdf,.pdf" multiple hidden>
     </div>
     <ul class="upload-list" id="upload-list"></ul>

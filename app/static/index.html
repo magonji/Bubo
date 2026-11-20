@@ -2,9 +2,17 @@
 <html lang="en-GB">
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>Bubo</title>
 <link rel="icon" type="image/svg+xml" href="/static/owl.svg">
+<link rel="apple-touch-icon" href="/static/icons/apple-touch-icon.png">
+<link rel="manifest" href="/static/manifest.webmanifest">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="Bubo">
+<meta name="apple-mobile-web-app-status-bar-style" content="default">
+<meta name="theme-color" content="#ffffff" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#1f2227" media="(prefers-color-scheme: dark)">
 <link rel="stylesheet" href="/static/style.css">
 </head>
 <body>
@@ -21,6 +29,8 @@
 
 <div id="app" class="app hidden">
   <header class="topbar">
+    <button type="button" id="side-btn" class="icon-btn narrow-only" aria-label="Library, collections and tags"
+      aria-controls="sidebar" aria-expanded="false"><i data-icon="sidebar"></i></button>
     <div class="brand"><svg class="logo" viewBox="0 0 32 32" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M8.5 17.5V9.5L10 4l3.6 4h4.8L22 4l1.5 5.5v8c0 5.2-3.4 9-7.5 9s-7.5-3.8-7.5-9z"/><path d="M10.2 11.2Q13 9.6 16 12.6Q19 9.6 21.8 11.2"/><circle cx="13" cy="14.6" r="1.9"/><circle cx="19" cy="14.6" r="1.9"/><path d="M16 15.8v2.2"/><path d="M5 29h22M13.5 26.4V29M18.5 26.4V29"/></svg><span class="wordmark">Bubo</span></div>
     <div class="search-box clearable">
       <input type="search" id="search" placeholder="Search titles, authors, abstracts and full text…" aria-label="Search"
@@ -30,7 +40,7 @@
       <div id="search-suggest" class="search-suggest hidden"></div>
     </div>
     <button type="button" id="add-btn" class="primary add-btn" title="Add papers by identifier, from PDFs or manually">
-      <i data-icon="plus"></i> Add</button>
+      <i data-icon="plus"></i><span class="add-label">Add</span></button>
     <div class="menu-wrap">
       <button id="menu-btn" class="icon-btn" data-tip="Settings, export and sign out" aria-label="Menu"
         aria-haspopup="menu" aria-expanded="false" aria-controls="main-menu"><i data-icon="menu"></i></button>
@@ -94,10 +104,14 @@
       </div>
     </section>
 
-    <section class="detail" id="detail">
-
+    <section class="detail-pane" aria-label="Item details">
+      <div class="detail-back narrow-only">
+        <button type="button" id="detail-back"><i data-icon="arrow-left"></i> <span id="detail-back-label">Library</span></button>
+      </div>
+      <div class="detail" id="detail"></div>
     </section>
   </main>
+  <div id="side-backdrop" class="side-backdrop" hidden></div>
 </div>
 
 <div id="viewer" class="viewer hidden">

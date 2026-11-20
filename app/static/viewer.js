@@ -36,6 +36,9 @@ const S = {
   colour: COLOURS[store.get("hlColour")] ? store.get("hlColour") : "yellow", onClose: null,
 };
 
+// On a phone (as in app.js): one pane at a time.
+const NARROW = window.matchMedia("(max-width: 760px)");
+
 // ---------------------------------------------------------------------------
 // Opening and closing
 // ---------------------------------------------------------------------------
@@ -51,7 +54,8 @@ async function open(item, { annotationId = null, onClose = null, page = null, te
   ui.download.href = `/api/items/${item.id}/file?download=true`;
   ui.annotated.href = `/api/items/${item.id}/annotated.pdf`;
   ui.pages.innerHTML = '<div class="viewer-msg">Loading PDF…</div>';
-  ui.sidebar.classList.toggle("hidden", store.get("annSidebar", "1") !== "1");
+  // On a phone the annotations panel covers the page, so it starts closed.
+  ui.sidebar.classList.toggle("hidden", NARROW.matches || store.get("annSidebar", "1") !== "1");
   ui.root.classList.remove("hidden");
   setNoteMode(false);
   renderColourPicker();
@@ -138,7 +142,8 @@ function createPage(index, page) {
 }
 
 function fitScale() {
-  const avail = ui.pages.clientWidth - 40;
+  const pad = parseFloat(getComputedStyle(ui.pages).paddingLeft) || 0;
+  const avail = ui.pages.clientWidth - 2 * pad - 8;
   const widest = Math.max(...S.pages.map((p) => p.base.width));
   return clampScale(avail / widest);
 }
@@ -537,10 +542,15 @@ document.addEventListener("pointerup", () => {
   S.pages.forEach((p) => p.textDiv.classList.remove("selecting"));
   if (!ui.root.classList.contains("hidden")) setTimeout(checkSelection, 0);
 });
+// On touch screens the selection is adjusted with handles, which send no pointer
+// events, so offer the highlight colours once the selection has settled.
+let selTimer;
 document.addEventListener("selectionchange", () => {
-  if (!S.pending) return;
   const sel = window.getSelection();
-  if (!sel || sel.isCollapsed) hidePopup();
+  if (S.pending && (!sel || sel.isCollapsed)) hidePopup();
+  if (ui.root.classList.contains("hidden") || !sel || sel.isCollapsed) return;
+  clearTimeout(selTimer);
+  selTimer = setTimeout(checkSelection, 350);
 });
 
 // Click on a page: add a note (in note mode) or select the highlight under the pointer.
@@ -594,7 +604,7 @@ ui.noteBtn.addEventListener("click", () => setNoteMode(!S.noteMode));
 function toggleSidebar(force) {
   const show = force ?? ui.sidebar.classList.contains("hidden");
   ui.sidebar.classList.toggle("hidden", !show);
-  store.set("annSidebar", show ? "1" : "0");
+  if (!NARROW.matches) store.set("annSidebar", show ? "1" : "0");
   if (S.fit) layout(true);
 }
 byId("sidebar-toggle").addEventListener("click", () => toggleSidebar());

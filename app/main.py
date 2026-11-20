@@ -23,6 +23,7 @@ STATIC = Path(__file__).parent / "static"
 # PDF.js ships as ES modules and WebAssembly; make sure they get the right MIME types.
 mimetypes.add_type("text/javascript", ".mjs")
 mimetypes.add_type("application/wasm", ".wasm")
+mimetypes.add_type("application/manifest+json", ".webmanifest")
 
 if not settings.password:
     raise RuntimeError("Set the BUBO_PASSWORD environment variable before starting Bubo.")
@@ -191,6 +192,13 @@ def _collection_ids(conn, cid: int | None) -> list[int]:
 @app.get("/", include_in_schema=False)
 def index():
     return FileResponse(STATIC / "index.html")
+
+
+# iOS asks for these at the root when a page is added to the home screen.
+@app.get("/apple-touch-icon.png", include_in_schema=False)
+@app.get("/apple-touch-icon-precomposed.png", include_in_schema=False)
+def apple_touch_icon():
+    return FileResponse(STATIC / "icons" / "apple-touch-icon.png")
 
 
 @app.post("/api/login")
