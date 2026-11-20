@@ -37,10 +37,13 @@ them from the browser.
 - **Find PDF** for papers without one (the dimmed icon in the PDF column, or the button in the
   item pane): looks on arXiv, Unpaywall (with `BUBO_CONTACT_EMAIL` set) and the publisher's page.
 - **Library table** with a comfortable layout (authors and venue under the title) or a compact
-  one, papers listed newest first (by publication year) and sortable by any column,
-  including the date added, a reading-list column, and icons for notes
-  and PDFs. Shift-click selects a range and Cmd/Ctrl-click adds or removes papers, for bulk
-  actions or for dragging several papers onto a collection at once. With nothing selected, the
+  one, or the papers shown by their figures: a **gallery** of cards or a **list with figures**
+  (the buttons next to the list's title; these layouts have an Order menu instead of column
+  headings, and their cards can be selected and dragged like rows). Papers are listed newest
+  first (by publication year); the table can be sorted by any column, including the date
+  added, and has a reading-list column and icons for notes and PDFs. Shift-click selects a
+  range and Cmd/Ctrl-click adds or removes papers, for bulk actions or for dragging several
+  papers onto a collection at once. With nothing selected, the
   item pane shows recently added papers, the reading list and papers with incomplete metadata.
 - A **reading list** for papers you want to read: add or remove a paper with the bookmark button
   in its pane, or drag papers onto "Reading list" in the sidebar. Papers on it are marked in the

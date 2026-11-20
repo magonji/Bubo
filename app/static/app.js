@@ -76,7 +76,10 @@ function setSortKey(value) {
   else state.sort = value;
 }
 try { state.expanded = new Set(JSON.parse(localStorage.getItem("expanded") || "[]")); } catch {}
-try { state.density = localStorage.getItem("density") === "compact" ? "compact" : "comfortable"; } catch {}
+try {
+  const saved = localStorage.getItem("density");
+  state.density = ["compact", "gallery", "figures"].includes(saved) ? saved : "comfortable";
+} catch {}
 
 // --------------------------------------------------------------------------
 // API
@@ -168,7 +171,7 @@ async function refresh() {
 // The item pane: one item, several (bulk actions) or none (library overview).
 function renderSelection() {
   if (!state.selectedIds.size) hideDetailPane();
-  $$("#items tr").forEach((tr) => tr.classList.toggle("selected", state.selectedIds.has(Number(tr.dataset.id))));
+  $$("#items tr, #cards [data-id]").forEach((el) => el.classList.toggle("selected", state.selectedIds.has(Number(el.dataset.id))));
   if (state.selectedIds.size > 1) return renderMulti();
   renderDetail(state.items.find((i) => i.id === state.selected) || null);
 }
@@ -472,7 +475,7 @@ const LAYOUTS = {
 };
 
 function renderHead() {
-  const cols = LAYOUTS[state.density];
+  const cols = LAYOUTS[state.density] || LAYOUTS.comfortable;
   const sort = sortKey(), base = sort.replace(/_(asc|desc)$/, "");
   // "year" and "added" sort descending by default; everything else ascending.
   const desc = ["year", "added"].includes(base) ? !sort.endsWith("_asc") : sort.endsWith("_desc");
@@ -486,7 +489,7 @@ function renderHead() {
       sorted ? `<span class="sort-arrow">${icon(desc ? "arrow-down" : "arrow-up")}</span>` : ""}</th>`;
   }).join("")}</tr>`;
   $$(".density [data-density]").forEach((b) => b.setAttribute("aria-pressed", String(b.dataset.density === state.density)));
-  $("#items-table").classList.toggle("comfortable", state.density === "comfortable");
+  $("#items-table").classList.toggle("comfortable", state.density !== "compact");
 }
 
 function cell(c, i) {
@@ -528,7 +531,7 @@ function renderItems() {
   $("#count").textContent = `${state.items.length} item${state.items.length === 1 ? "" : "s"}`;
   $("#empty").classList.toggle("hidden", state.items.length > 0);
   renderHead();
-  const cols = LAYOUTS[state.density];
+  const cols = LAYOUTS[state.density] || LAYOUTS.comfortable;
   $("#items").innerHTML = state.items.map((i) => {
     const sel = state.selectedIds.has(i.id) ? " selected" : "";
     return `<tr data-id="${i.id}" draggable="true" class="item-row${sel}">${cols.map((c) => cell(c, i)).join("")}</tr>${i.match ? `
@@ -540,7 +543,7 @@ function renderItems() {
   $("#items-table").classList.toggle("with-snippets", state.items.some((i) => i.match));
   renderCards();
   const queue = state.view.type === "toread";
-  $("#toread-order").classList.toggle("hidden", !queue);
+  $("#toread-order").classList.toggle("hidden", !queue || (!!cardMode() && !narrow.matches));
   if (queue) {
     const sort = sortKey();
     $("#toread-order-select").value = sort.startsWith("to_read") ? sort : "";
@@ -572,21 +575,29 @@ function thumbHTML(i) {
     <span class="gc-venue">${esc(venue)}</span><span class="gc-title">${esc(i.title || "(untitled)")}</span></div>`;
 }
 
-function cardHTML(i) {
+// "gallery", "list" or null (the table).
+function cardMode() {
+  if (narrow.matches) return state.mobileView;
+  return { gallery: "gallery", figures: "list" }[state.density] || null;
+}
+
+function cardHTML(i, mode = cardMode()) {
   const authors = authorsShort(i.authors);
+  const desk = narrow.matches ? "" : ` draggable="true"${state.selectedIds.has(i.id) ? ' aria-current="true"' : ""}`;
+  const sel = state.selectedIds.has(i.id) ? " selected" : "";
   const title = esc(i.title) || "(untitled)";
   const snippet = i.match ? `<div class="c-snippet">${highlight(i.match.snippet)}</div>` : "";
   const onList = i.to_read ? `<span class="sr-only">, on your reading list</span>` : "";
-  if (state.mobileView === "list") {
+  if (mode === "list") {
     const meta = [authors, i.venue_short || i.venue, i.year].filter(Boolean).join(" · ");
-    return `<a class="m-row" href="/paper/${i.id}" data-id="${i.id}">
+    return `<a class="m-row${sel}" href="/paper/${i.id}" data-id="${i.id}"${desk}>
       <div class="thumb thumb-sm">${thumbHTML(i)}</div>
       <div class="r-text"><div class="c-title">${title}${onList}</div>
         <div class="c-meta">${esc(meta)}</div>${snippet}</div>
       ${i.to_read ? `<span class="r-mark" aria-hidden="true">${icon("bookmark")}</span>` : ""}
     </a>`;
   }
-  return `<a class="card" href="/paper/${i.id}" data-id="${i.id}">
+  return `<a class="card${sel}" href="/paper/${i.id}" data-id="${i.id}"${desk}>
     <div class="thumb">${thumbHTML(i)}
       ${i.to_read ? `<span class="badge badge-tl" aria-hidden="true">${icon("bookmark")}</span>` : ""}
       ${i.has_file ? `<span class="badge badge-br" aria-hidden="true">PDF</span>` : ""}
@@ -605,9 +616,12 @@ let figurePoll;
 function renderCards() {
   const box = $("#cards");
   clearTimeout(figurePoll);
-  if (!narrow.matches) { box.innerHTML = ""; return; }
-  box.className = `cards ${state.mobileView}`;
-  box.innerHTML = state.items.map(cardHTML).join("");
+  const mode = cardMode();
+  $(".table-wrap").classList.toggle("with-cards", !!mode);
+  renderDeskSort(mode);
+  if (!mode) { box.innerHTML = ""; box.className = "cards"; return; }
+  box.className = `cards ${mode}`;
+  box.innerHTML = state.items.map((i) => cardHTML(i, mode)).join("");
   $$(".view-switch [data-mode]").forEach((b) => b.setAttribute("aria-pressed", String(b.dataset.mode === state.mobileView)));
   const choices = state.view.type === "toread" ? [...SORT_CHOICES, ...QUEUE_CHOICES] : SORT_CHOICES;
   const sort = sortKey();
@@ -620,11 +634,39 @@ function renderCards() {
   if (state.items.some((i) => i.figures_status === "pending")) figurePoll = setTimeout(loadItems, 4000);
 }
 
+// On the desktop the order is chosen here, as the cards have no column headings.
+function renderDeskSort(mode) {
+  const wrap = $("#desk-sort");
+  const show = !!mode && !narrow.matches;
+  wrap.classList.toggle("hidden", !show);
+  if (!show) return;
+  $("#toread-order").classList.add("hidden");
+  const choices = state.view.type === "toread" ? [...SORT_CHOICES, ...QUEUE_CHOICES] : SORT_CHOICES;
+  const sort = sortKey(), select = $("#desk-sort-select");
+  select.innerHTML = choices.map(([v, label]) => `<option value="${v}">${label}</option>`).join("") +
+    (choices.some(([v]) => v === sort) ? "" : `<option value="${esc(sort)}">Custom order</option>`);
+  select.value = sort;
+}
+$("#desk-sort-select").addEventListener("change", (e) => { setSortKey(e.target.value); loadItems(); });
+
 $("#cards").addEventListener("click", (e) => {
   const a = e.target.closest("a[data-id]");
-  if (!a || e.metaKey || e.ctrlKey || e.shiftKey) return;
+  if (!a) return;
+  const id = Number(a.dataset.id);
+  if (narrow.matches) {
+    if (e.metaKey || e.ctrlKey || e.shiftKey) return;   // let the browser open the link
+    e.preventDefault();
+    return openPaper(id);   // paper.js
+  }
+  // Desktop: like a table row.
   e.preventDefault();
-  openPaper(Number(a.dataset.id));   // paper.js
+  const item = state.items.find((i) => i.id === id);
+  if (item) clickItem(e, item);
+});
+$("#cards").addEventListener("dblclick", (e) => {
+  const a = e.target.closest("a[data-id]");
+  const item = a && !narrow.matches && state.items.find((i) => i.id === Number(a.dataset.id));
+  if (item?.has_file) openViewer(item);
 });
 $$(".view-switch [data-mode]").forEach((b) => b.addEventListener("click", () => {
   state.mobileView = b.dataset.mode;
@@ -671,24 +713,32 @@ $("#items").addEventListener("click", (e) => {
   if (e.target.closest("td.pdf") && !(e.shiftKey || e.metaKey || e.ctrlKey)) {
     return item.has_file ? openViewer(item) : findPdf(item);
   }
+  if (!clickItem(e, item)) showDetailPane();
+});
+
+// A click on a paper (table row or card): Shift selects a range, Cmd/Ctrl adds or removes
+// one, a plain click selects just that paper. Returns true for a multiple selection.
+function clickItem(e, item) {
   if (e.shiftKey && state.anchor != null) {
     const ids = state.items.map((i) => i.id);
     const [a, b] = [ids.indexOf(state.anchor), ids.indexOf(item.id)].sort((x, y) => x - y);
     const range = ids.slice(a, b + 1);
     state.selectedIds = new Set([...(e.metaKey || e.ctrlKey ? state.selectedIds : []), ...range]);
     state.selected = item.id;
-    return renderSelection();
+    renderSelection();
+    return true;
   }
   if (e.metaKey || e.ctrlKey) {
     if (state.selectedIds.has(item.id)) state.selectedIds.delete(item.id);
     else state.selectedIds.add(item.id);
     state.anchor = item.id;
     state.selected = state.selectedIds.has(item.id) ? item.id : [...state.selectedIds].at(-1) ?? null;
-    return renderSelection();
+    renderSelection();
+    return true;
   }
   select(item);
-  showDetailPane();
-});
+  return false;
+}
 $("#items").addEventListener("dblclick", (e) => {
   const tr = e.target.closest("tr");
   const item = tr && state.items.find((i) => i.id === Number(tr.dataset.id));
@@ -700,10 +750,11 @@ $("#items").addEventListener("mouseover", (e) => {
   if (id) $$(`#items tr[data-id="${id}"]`).forEach((tr) => tr.classList.add("hover"));
 });
 $("#items").addEventListener("mouseleave", () => $$("#items tr.hover").forEach((tr) => tr.classList.remove("hover")));
-$("#items").addEventListener("dragstart", (e) => {
-  const tr = e.target.closest("tr");
-  if (!tr) return;
-  const id = Number(tr.dataset.id);
+// Papers (rows or cards) can be dragged onto a collection or the reading list.
+function dragItems(e) {
+  const el = e.target.closest("[data-id]");
+  if (!el) return;
+  const id = Number(el.dataset.id);
   const ids = state.selectedIds.has(id) && state.selectedIds.size > 1 ? [...state.selectedIds] : [id];
   e.dataTransfer.setData("text/x-bubo-item", String(ids[0]));
   e.dataTransfer.setData("text/x-bubo-items", JSON.stringify(ids));
@@ -714,7 +765,9 @@ $("#items").addEventListener("dragstart", (e) => {
     e.dataTransfer.setDragImage(ghost, 10, 10);
     setTimeout(() => ghost.remove(), 0);
   }
-});
+}
+$("#items").addEventListener("dragstart", dragItems);
+$("#cards").addEventListener("dragstart", dragItems);
 
 const IS_MAC = /Mac|iPhone|iPad/.test(navigator.platform || navigator.userAgent);
 $("#search-hint").textContent = IS_MAC ? "⌘K" : "Ctrl K";
@@ -756,7 +809,7 @@ function select(item) {
   state.selectedIds = new Set(item ? [item.id] : []);
   state.anchor = state.selected;
   renderSelection();
-  $(`#items tr[data-id="${state.selected}"]`)?.scrollIntoView({ block: "nearest" });
+  $(`#items tr[data-id="${state.selected}"], #cards [data-id="${state.selected}"]`)?.scrollIntoView({ block: "nearest" });
 }
 
 let searchTimer;

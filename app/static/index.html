@@ -90,9 +90,13 @@
               <option value="to_read_desc">Newest added first</option>
               <option value="" disabled>By column</option>
             </select></label>
-          <div class="density" role="group" aria-label="Row layout">
+          <label id="desk-sort" class="sub-toggle hidden">Order
+            <select id="desk-sort-select" aria-label="Order of the papers"></select></label>
+          <div class="density" role="group" aria-label="Layout">
             <button type="button" class="icon-btn" data-density="comfortable" data-tip="Comfortable: authors and venue under the title" aria-label="Comfortable rows"><i data-icon="rows-2"></i></button>
             <button type="button" class="icon-btn" data-density="compact" data-tip="Compact: one line per paper" aria-label="Compact rows"><i data-icon="rows-1"></i></button>
+            <button type="button" class="icon-btn" data-density="gallery" data-tip="Gallery: papers by their first figure" aria-label="Gallery"><i data-icon="grid"></i></button>
+            <button type="button" class="icon-btn" data-density="figures" data-tip="List with figures" aria-label="List with figures"><i data-icon="list"></i></button>
           </div>
         </div>
       </div>
