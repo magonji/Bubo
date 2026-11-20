@@ -192,10 +192,10 @@ function carouselHTML(i, status) {
     </div>
     ${figs.length > 1 ? `<button type="button" class="car-arrow car-prev" data-act="prev" aria-label="Previous figure">${icon("chevron-left")}</button>
       <button type="button" class="car-arrow car-next" data-act="next" aria-label="Next figure">${icon("chevron-right")}</button>` : ""}
-    <button type="button" class="car-expand" data-act="expand">${icon("expand")} Expand</button>
+    <button type="button" class="car-expand" data-act="expand"><span>${icon("expand")} Expand</span></button>
   </div>
   <div class="car-nav">
-    ${figs.length > 1 ? `<div class="car-dots">${figs.map((f, n) => `<button type="button" data-act="dot" data-n="${n}" aria-label="Figure ${n + 1}"></button>`).join("")}</div>` : ""}
+    ${figs.length > 1 && figs.length <= 9 ? `<div class="car-dots">${figs.map((f, n) => `<button type="button" data-act="dot" data-n="${n}" aria-label="Figure ${n + 1}"></button>`).join("")}</div>` : ""}
     <span class="car-count" aria-live="polite"></span>
     <button type="button" class="pv-link" data-act="all-figures">All figures</button>
   </div>

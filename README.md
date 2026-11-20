@@ -23,6 +23,17 @@ them from the browser.
   "supplementary", "mmc1"…) and files that are not PDFs are marked as such automatically.
   They can also be added from the paper's pane. They are stored next to the paper as
   `… - SI.pdf`, `… - SI 2.xlsx`, and the text of SI PDFs is included in search.
+- **Figures**: when a paper gets a PDF, Bubo finds its figures in the background: the drawings,
+  images and labels next to each "Figure N" caption (vector plots keep their axes) and embedded
+  images that no caption claims, ignoring logos and small images. They are kept with their
+  captions as thumbnails for the phone layout and a figure carousel. Any figure can be made the
+  paper's cover. For papers added earlier, run `python -m app.cli figures` (see below).
+- **On phones** (screens up to 760 px) the library is a gallery of figure cards or a list with
+  thumbnails, and each paper has its own screen at `/paper/<id>`: a carousel of its figures,
+  the abstract, details with a copyable DOI, collections, tags, notes saved as you type and
+  related papers, with buttons to open the PDF, cite, file and share it. Papers without figures
+  get a cover coloured from the journal's name. Bubo can be added to the home screen, where it
+  opens like an app with the owl as its icon. On a computer the table stays as it is.
 - **Find PDF** for papers without one (the dimmed icon in the PDF column, or the button in the
   item pane): looks on arXiv, Unpaywall (with `BUBO_CONTACT_EMAIL` set) and the publisher's page.
 - **Library table** with a comfortable layout (authors and venue under the title) or a compact
@@ -110,6 +121,7 @@ Set `BUBO_DATA_DIR` in `.env` to the folder on the server that should hold the l
 │   ├── Brown et al. - 2020 - Language Models are Few-Shot Learners - SI.pdf
 │   ├── Krizhevsky et al. - 2012 - ImageNet Classification with Deep Convolutional Neural Networks.pdf
 │   └── Vaswani et al. - 2017 - Attention Is All You Need.pdf
+├── figures/            # figures extracted from the PDFs (WebP), one folder per paper
 └── .secret_key         # session key generated on first start-up
 ```
 
@@ -185,6 +197,20 @@ If you use nginx, raise `client_max_body_size` (e.g. `200m`) so that large PDFs 
 | `BUBO_SESSION_DAYS` | Session length in days (default 30). |
 | `BUBO_SECRET` | Optional session key; otherwise one is generated in `data/.secret_key`. |
 
+### Maintenance commands
+
+Run them inside the container, while Bubo is running if you like:
+
+```bash
+docker compose exec bubo python -m app.cli figures                 # papers without figures yet
+docker compose exec bubo python -m app.cli figures --all           # extract every paper's figures again
+docker compose exec bubo python -m app.cli journal-abbreviations   # "Nat. Commun." etc., from Crossref
+```
+
+The first fills in the figures of papers added before figure extraction existed; new papers get
+theirs automatically. The second asks Crossref for the abbreviated journal name of papers with a
+DOI (new papers get it when they are added); it is shown in the phone list.
+
 ## Licence
 
 Bubo is free software, released under the [GNU Affero General Public License v3.0](LICENSE)
@@ -193,9 +219,9 @@ people over a network, you must offer them its source code; the "Source code" li
 points to this repository, so change it if you publish a modified copy elsewhere.
 
 Bundled third-party components keep their own licences: [PDF.js](https://github.com/mozilla/pdf.js)
-(Apache-2.0, `app/static/vendor/pdfjs/LICENSE`) and the Fraunces font (SIL Open Font License,
-`app/static/fonts/Fraunces-OFL.txt`). Bubo uses [PyMuPDF](https://pymupdf.readthedocs.io/),
-which is also licensed under the AGPL-3.0.
+(Apache-2.0, `app/static/vendor/pdfjs/LICENSE`) and the Fraunces and Inter fonts (SIL Open
+Font License, `app/static/fonts/`). Bubo uses [PyMuPDF](https://pymupdf.readthedocs.io/), which
+is also licensed under the AGPL-3.0, and [Pillow](https://python-pillow.org/) (MIT-CMU licence).
 
 ## Development
 
@@ -214,9 +240,13 @@ Layout:
 - `app/bibtex.py`: BibTeX export
 - `app/annotate.py`: embeds annotations into an exported copy of a PDF
 - `app/storage.py`: the `papers/` folder (readable names, renames, migration of older layouts)
+- `app/figures.py`: finds figures in PDFs and stores them as WebP thumbnails (PyMuPDF, Pillow)
+- `app/cli.py`: maintenance commands
 - `docker-entrypoint.sh`: data-folder permissions, then drops privileges
 - `app/static/`: web interface (plain HTML/CSS/JS, no build step); `viewer.js` is the PDF viewer
-- `app/static/fonts/`: the Fraunces font used for the name (SIL Open Font License)
+  and `paper.js` the paper screen on phones
+- `app/static/fonts/`: Fraunces (the name, titles on phones) and Inter (the phone layout),
+  both under the SIL Open Font License
 - `app/static/vendor/pdfjs/`: [PDF.js](https://github.com/mozilla/pdf.js) 6.4.299 (Apache-2.0),
   bundled so that the server needs no external CDN
 

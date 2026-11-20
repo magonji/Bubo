@@ -704,9 +704,9 @@ input.switch:disabled { opacity: .5; cursor: default; }
     min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .list-head #count { font-size: 15px; color: var(--muted); white-space: nowrap; }
   .list-tools { display: none; }
-  .view-switch { display: inline-flex !important; margin-left: auto; padding: 3px; gap: 2px; flex: none;
+  .view-switch { display: inline-flex !important; margin-left: auto; padding: 0; gap: 0; flex: none;
     border: 1px solid var(--border); border-radius: 12px; background: var(--panel); }
-  .view-switch button { width: 44px; height: 38px; padding: 0; border: none; border-radius: 9px;
+  .view-switch button { width: 46px; height: 44px; padding: 0; border: 3px solid var(--panel); border-radius: 12px;
     background: transparent; color: var(--muted); display: inline-flex; align-items: center; justify-content: center; }
   .view-switch button .icon { width: 20px; height: 20px; }
   .view-switch button[aria-pressed="true"] { background: var(--hover); color: var(--text); }
@@ -717,7 +717,7 @@ input.switch:disabled { opacity: .5; cursor: default; }
   .chip[aria-pressed="true"] { background: var(--accent-subtle); border-color: var(--accent); color: var(--accent-strong); }
   .chip-select { position: relative; padding: 0; }
   .chip-select select { appearance: none; -webkit-appearance: none; border: none; background: transparent;
-    height: 100%; padding: 0 40px 0 18px; font-size: 15px; border-radius: 999px; color: inherit; outline-offset: 2px; }
+    height: calc(100% + 2px); margin: -1px; padding: 0 40px 0 18px; font-size: 15px; border-radius: 999px; color: inherit; outline-offset: 2px; }
   .chip-select .icon { position: absolute; right: 14px; top: 50%; transform: translateY(-50%); width: 18px; height: 18px; pointer-events: none; }
 
   /* Cards instead of the table */
@@ -819,12 +819,15 @@ input.switch:disabled { opacity: .5; cursor: default; }
   .car-arrow:disabled { opacity: 0; pointer-events: none; }
   .car-prev { left: 0; }
   .car-next { right: 0; }
-  .car-expand { position: absolute; top: 10px; right: 10px; display: inline-flex; align-items: center; gap: 6px; height: 36px;
-    padding: 0 14px; border: none; border-radius: 999px; background: rgba(18, 19, 22, .72); color: #fff; font-size: 14px; font-weight: 600; }
+  /* 44 px tall to tap, a 36 px pill to look at. */
+  .car-expand { position: absolute; top: 6px; right: 10px; display: inline-flex; align-items: center; height: 44px;
+    padding: 0; border: none; background: transparent; color: #fff; font-size: 14px; font-weight: 600; }
+  .car-expand span { display: inline-flex; align-items: center; gap: 6px; height: 36px; padding: 0 14px; border-radius: 999px;
+    background: rgba(18, 19, 22, .72); }
   .car-expand .icon { width: 16px; height: 16px; }
   .car-nav { display: flex; align-items: center; gap: 12px; margin-top: 10px; min-height: 44px; }
   .car-dots { display: flex; gap: 0; }
-  .car-dots button { width: 22px; height: 44px; padding: 0; border: none; background: transparent; display: inline-flex;
+  .car-dots button { width: 24px; height: 44px; padding: 0; border: none; background: transparent; display: inline-flex;
     align-items: center; justify-content: center; }
   .car-dots button::before { content: ""; width: 8px; height: 8px; border-radius: 4px; background: var(--tertiary); opacity: .7; transition: width .2s; }
   .car-dots button[aria-current="true"]::before { width: 20px; background: var(--accent); opacity: 1; }
