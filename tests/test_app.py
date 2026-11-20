@@ -607,3 +607,92 @@ def test_contact_email_setting(client):
     # Clearing it falls back to BUBO_CONTACT_EMAIL (unset in the tests).
     assert client.patch("/api/settings", json={"contact_email": ""}).json()["contact_email"] == ""
     assert cfg.contact_email is None
+
+
+def all_files():
+    root = main.settings.papers_dir
+    return sorted(str(p.relative_to(root)) for p in root.rglob("*")
+                  if p.is_file() and not p.name.startswith("."))
+
+
+def test_supplementary_files(client):
+    login(client)
+    for it in client.get("/api/items").json():
+        client.delete(f"/api/items/{it['id']}")
+    paper = make_pdf("Main paper text")
+    r = client.post("/api/items/upload", files=[("files", ("paper.pdf", paper, "application/pdf"))])
+    item_id = r.json()["results"][0]["id"]
+    client.patch(f"/api/items/{item_id}", json={
+        "title": "Silent flight", "authors": [{"family": "Strix"}], "year": 2024})
+
+    si = make_pdf("Supplementary figures about feather serrations")
+    r = client.post(f"/api/items/{item_id}/supplementary",
+                    files={"file": ("ncomms-s1.pdf", si, "application/pdf")})
+    assert r.status_code == 200 and r.json()["status"] == "added"
+    table = b"species,noise\nowl,18\n"
+    r = client.post(f"/api/items/{item_id}/supplementary",
+                    files={"file": ("Data S1.CSV", table, "text/csv")})
+    item = r.json()["item"]
+    assert [s["name"] for s in item["supplementary"]] == ["ncomms-s1.pdf", "Data S1.CSV"]
+    assert all_files() == ["Strix - 2024 - Silent flight - SI 2.csv",
+                           "Strix - 2024 - Silent flight - SI.pdf",
+                           "Strix - 2024 - Silent flight.pdf"]
+    first, second = (s["id"] for s in item["supplementary"])
+
+    # The same file twice, or the paper's own PDF, is not added again.
+    again = client.post(f"/api/items/{item_id}/supplementary",
+                        files={"file": ("copy.pdf", si, "application/pdf")})
+    assert again.json()["status"] == "duplicate"
+    own = client.post(f"/api/items/{item_id}/supplementary",
+                      files={"file": ("paper.pdf", paper, "application/pdf")})
+    assert own.status_code == 409
+
+    # The text of supplementary PDFs is searchable, and labelled as such.
+    found = client.get("/api/items", params={"q": "serrations"}).json()
+    assert [i["id"] for i in found] == [item_id]
+    assert found[0]["match"]["field"] == "supplementary"
+
+    # PDFs open in the browser; other files are downloaded, never rendered.
+    r = client.get(f"/api/supplementary/{first}/file")
+    assert r.content == si and r.headers["content-disposition"].startswith("inline")
+    html = client.post(f"/api/items/{item_id}/supplementary",
+                       files={"file": ("page.html", b"<script>alert(1)</script>", "text/html")})
+    html_id = html.json()["item"]["supplementary"][-1]["id"]
+    r = client.get(f"/api/supplementary/{html_id}/file")
+    assert r.headers["content-disposition"].startswith("attachment")
+    assert r.headers["content-type"] == "application/octet-stream"
+    client.delete(f"/api/supplementary/{html_id}")
+
+    # Files follow the paper's metadata, and the numbering closes up after a deletion.
+    client.patch(f"/api/items/{item_id}", json={"title": "Quiet wings"})
+    assert all_files() == ["Strix - 2024 - Quiet wings - SI 2.csv",
+                           "Strix - 2024 - Quiet wings - SI.pdf",
+                           "Strix - 2024 - Quiet wings.pdf"]
+    item = client.delete(f"/api/supplementary/{first}").json()
+    assert [s["id"] for s in item["supplementary"]] == [second]
+    assert all_files() == ["Strix - 2024 - Quiet wings - SI.csv", "Strix - 2024 - Quiet wings.pdf"]
+    assert client.get("/api/items", params={"q": "serrations"}).json() == []
+
+    # Deleting the paper removes its supplementary files too.
+    client.delete(f"/api/items/{item_id}")
+    assert all_files() == []
+
+
+def test_search_index_gains_supplementary_column():
+    from app import db
+    conn = db.connect()
+    conn.execute("DROP TABLE items_fts")
+    conn.execute("CREATE VIRTUAL TABLE items_fts USING fts5(title, authors, abstract, venue, "
+                 "extra, fulltext, tokenize = 'unicode61 remove_diacritics 2')")
+    conn.execute("INSERT INTO items_fts (rowid, title, authors, abstract, venue, extra, fulltext) "
+                 "VALUES (999, 'Kept title', '', '', '', '', 'kept text')")
+    conn.commit()
+    conn.close()
+    db.init_db()
+    conn = db.connect()
+    cols = [r[1] for r in conn.execute("PRAGMA table_info(items_fts)")]
+    assert cols[-1] == "supplementary"
+    assert conn.execute("SELECT title FROM items_fts WHERE items_fts MATCH 'kept'").fetchone()[0] == "Kept title"
+    conn.execute("DELETE FROM items_fts WHERE rowid = 999")
+    conn.commit()
+    conn.close()

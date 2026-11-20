@@ -529,6 +529,20 @@ input.switch:disabled { opacity: .5; cursor: default; }
 .upload-list .progress { grid-column: 2 / -1; height: 3px; background: var(--border); border-radius: 2px; overflow: hidden; }
 .upload-list .progress span { display: block; height: 100%; background: var(--accent); transition: width .2s; }
 .upload-target { margin-top: 14px; margin-bottom: 0; }
+.upload-role { grid-column: 2 / -1; display: flex; flex-wrap: wrap; gap: 6px; margin-top: 2px; }
+.upload-role select { flex: 1 1 260px; min-width: 0; font-size: 12.5px; padding: 3px 6px; }
+.upload-role .upload-pick { flex: 1 1 100%; font-size: 12.5px; padding: 4px 8px; }
+.supp-list { list-style: none; margin: 0 0 4px; padding: 0; display: flex; flex-direction: column; gap: 2px; }
+.supp-list li { display: flex; align-items: center; gap: 6px; padding: 3px 4px; border-radius: 5px; font-size: 13px; }
+.supp-list li:hover { background: var(--hover); }
+.supp-list li > .icon { color: var(--muted); }
+.supp-list .name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; text-decoration: none; }
+.supp-list .name:hover { text-decoration: underline; }
+.supp-list .size { font-size: 12px; white-space: nowrap; }
+.supp-btn { display: inline-flex; border: none; background: transparent; padding: 3px; color: var(--muted); border-radius: 4px; line-height: 0; }
+.supp-btn:hover { background: var(--border); color: var(--text); }
+.link-btn { display: inline-flex; align-items: center; gap: 5px; border: none; background: transparent; padding: 3px 0; color: var(--accent-strong); font-size: 13px; }
+.link-btn:hover { background: transparent; text-decoration: underline; }
 .upload-toread { display: flex; align-items: center; gap: 6px; margin-top: 10px; font-size: 13px; cursor: pointer; }
 .sub-toggle select { padding: 2px 6px; font-size: 12px; }
 .sub-toggle input.switch { transform: scale(.85); }

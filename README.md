@@ -16,6 +16,13 @@ them from the browser.
   or onto a collection in the sidebar, also opens the dialog. Bubo reads each PDF, looks for a
   DOI or an arXiv stamp and fills in the metadata from Crossref or arXiv. If it finds neither,
   it tries a title search and, as a last resort, uses the PDF's own metadata.
+- **Supplementary information**: keep any number of SI files with a paper (PDFs,
+  spreadsheets, data, videos…). In the upload dialog each file can be declared as a paper or
+  as supplementary information for another PDF in the same upload, for the paper open in the
+  item pane, or for any paper in the library; files whose names look like SI ("SI", "ESI",
+  "supplementary", "mmc1"…) and files that are not PDFs are marked as such automatically.
+  They can also be added from the paper's pane. They are stored next to the paper as
+  `… - SI.pdf`, `… - SI 2.xlsx`, and the text of SI PDFs is included in search.
 - **Find PDF** for papers without one (the dimmed icon in the PDF column, or the button in the
   item pane): looks on arXiv, Unpaywall (with `BUBO_CONTACT_EMAIL` set) and the publisher's page.
 - **Library table** with a comfortable layout (authors and venue under the title) or a compact
@@ -99,6 +106,7 @@ Set `BUBO_DATA_DIR` in `.env` to the folder on the server that should hold the l
 ├── library.db          # SQLite database: metadata, collections, tags, annotations, search index
 ├── papers/             # all the PDFs, in one folder
 │   ├── Brown et al. - 2020 - Language Models are Few-Shot Learners.pdf
+│   ├── Brown et al. - 2020 - Language Models are Few-Shot Learners - SI.pdf
 │   ├── Krizhevsky et al. - 2012 - ImageNet Classification with Deep Convolutional Neural Networks.pdf
 │   └── Vaswani et al. - 2017 - Attention Is All You Need.pdf
 └── .secret_key         # session key generated on first start-up

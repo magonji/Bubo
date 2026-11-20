@@ -1,10 +1,13 @@
 """Human-readable PDF storage.
 
-All PDFs are kept together in ``<data>/papers``, named after their metadata::
+All PDFs are kept together in ``<data>/papers``, named after their metadata, with any
+supplementary files next to them::
 
     papers/
     ├── LeCun et al. - 2015 - Deep learning.pdf
-    └── Vaswani et al. - 2017 - Attention Is All You Need.pdf
+    ├── Vaswani et al. - 2017 - Attention Is All You Need.pdf
+    ├── Vaswani et al. - 2017 - Attention Is All You Need - SI.pdf
+    └── Vaswani et al. - 2017 - Attention Is All You Need - SI 2.xlsx
 
 Collections exist only inside Bubo; they do not affect where files live. Files are
 renamed automatically when a paper's authors, year or title change, so the folder should
@@ -88,15 +91,18 @@ def base_name(title: str, authors: list[dict], year: int | None) -> str:
     return clean_component(" - ".join(p for p in parts if p), 190, "Untitled")
 
 
-def _unique(conn, base: str, item_id: int, current: str | None) -> str:
+def _unique(conn, base: str, ext: str, table: str, row_id: int, current: str | None) -> str:
+    """A free name for the file of row `row_id` in `table` (items or supplementary)."""
     taken = {r[0].lower() for r in conn.execute(
-        "SELECT file_name FROM items WHERE id != ? AND file_name IS NOT NULL", (item_id,))}
-    candidate, n = f"{base}.pdf", 2
+        "SELECT file_name FROM items WHERE file_name IS NOT NULL AND NOT (? = 'items' AND id = ?) "
+        "UNION ALL SELECT file_name FROM supplementary WHERE NOT (? = 'supplementary' AND id = ?)",
+        (table, row_id, table, row_id))}
+    candidate, n = f"{base}{ext}", 2
     while True:
         same_file = current is not None and candidate.lower() == current.lower()
         if candidate.lower() not in taken and (same_file or not (root() / candidate).exists()):
             return candidate
-        candidate, n = f"{base} ({n}).pdf", n + 1
+        candidate, n = f"{base} ({n}){ext}", n + 1
 
 
 def _prune(directory: Path) -> None:
@@ -125,11 +131,11 @@ def _prune(directory: Path) -> None:
         d = d.parent
 
 
-def save_new(data: bytes, sha256: str) -> dict:
-    """Write an uploaded PDF to the staging area; `sync_item` then gives it its name."""
+def save_new(data: bytes, sha256: str, ext: str = ".pdf") -> dict:
+    """Write an uploaded file to the staging area; `sync_item` then gives it its name."""
     staging = root() / STAGING
     staging.mkdir(parents=True, exist_ok=True)
-    rel = f"{STAGING}/{uuid.uuid4().hex}.pdf"
+    rel = f"{STAGING}/{uuid.uuid4().hex}{ext}"
     (root() / rel).write_bytes(data)
     return {"name": rel, "size": len(data), "hash": sha256}
 
@@ -143,31 +149,43 @@ def delete(rel: str | None) -> None:
         _prune(path.parent)
 
 
+def _place(conn, table: str, row_id: int, current: str, base: str) -> None:
+    """Give one stored file (a paper's PDF or a supplementary file) the name `base`."""
+    src = abs_path(current)
+    if not src.exists():
+        log.warning("File for %s %s is missing: %s", table, row_id, src)
+        return
+    ext = Path(current).suffix.lower()
+    target = _unique(conn, base, ext, table, row_id, current)
+    if target == current:
+        return
+    dst = root() / target
+    os.replace(src, dst)
+    try:
+        conn.execute(f"UPDATE {table} SET file_name = ? WHERE id = ?", (target, row_id))
+        conn.commit()
+    except Exception:
+        os.replace(dst, src)
+        raise
+    _prune(src.parent)
+
+
 def sync_item(conn, item_id: int) -> None:
-    """Rename the item's PDF to match its metadata. Commits the change."""
+    """Rename the item's PDF and supplementary files to match its metadata. Commits."""
     with lock:
         row = conn.execute("SELECT file_name, title, authors, year FROM items WHERE id = ?",
                            (item_id,)).fetchone()
-        if row is None or not row["file_name"]:
-            return
-        current = row["file_name"]
-        src = abs_path(current)
-        if not src.exists():
-            log.warning("PDF for item %s is missing: %s", item_id, src)
+        if row is None:
             return
         base = base_name(row["title"], json.loads(row["authors"] or "[]"), row["year"])
-        target = _unique(conn, base, item_id, current)
-        if target == current:
-            return
-        dst = root() / target
-        os.replace(src, dst)
-        try:
-            conn.execute("UPDATE items SET file_name = ? WHERE id = ?", (target, item_id))
-            conn.commit()
-        except Exception:
-            os.replace(dst, src)
-            raise
-        _prune(src.parent)
+        if row["file_name"]:
+            _place(conn, "items", item_id, row["file_name"], base)
+        supplementary = conn.execute(
+            "SELECT id, file_name FROM supplementary WHERE item_id = ? ORDER BY id",
+            (item_id,)).fetchall()
+        for n, s in enumerate(supplementary, 1):
+            _place(conn, "supplementary", s["id"], s["file_name"],
+                   f"{base} - SI" if n == 1 else f"{base} - SI {n}")
 
 
 def sync_all(conn) -> None:
@@ -178,7 +196,8 @@ def sync_all(conn) -> None:
     """
     with lock:
         for (item_id,) in conn.execute(
-                "SELECT id FROM items WHERE file_name IS NOT NULL").fetchall():
+                "SELECT id FROM items WHERE file_name IS NOT NULL "
+                "UNION SELECT item_id FROM supplementary").fetchall():
             sync_item(conn, item_id)
         legacy = settings.legacy_files_dir
         if legacy.is_dir() and not any(legacy.iterdir()):

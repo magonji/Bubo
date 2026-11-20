@@ -79,11 +79,24 @@ CREATE TABLE IF NOT EXISTS settings (
     value TEXT NOT NULL      -- JSON
 );
 
-CREATE VIRTUAL TABLE IF NOT EXISTS items_fts USING fts5(
-    title, authors, abstract, venue, extra, fulltext,
-    tokenize = 'unicode61 remove_diacritics 2'
+-- Supplementary information: any number of files per paper (PDFs, spreadsheets, ...).
+CREATE TABLE IF NOT EXISTS supplementary (
+    id            INTEGER PRIMARY KEY,
+    item_id       INTEGER NOT NULL REFERENCES items(id) ON DELETE CASCADE,
+    file_name     TEXT NOT NULL,            -- inside the papers folder, like items.file_name
+    original_name TEXT NOT NULL,            -- the name it was uploaded with
+    file_size     INTEGER,
+    file_hash     TEXT,
+    fulltext      TEXT,                     -- text of a PDF, for search
+    added_at      TEXT NOT NULL
 );
+CREATE INDEX IF NOT EXISTS idx_supplementary_item ON supplementary(item_id);
 """
+
+FTS_SCHEMA = """CREATE VIRTUAL TABLE IF NOT EXISTS {name} USING fts5(
+    title, authors, abstract, venue, extra, fulltext, supplementary,
+    tokenize = 'unicode61 remove_diacritics 2'
+)"""
 
 META_FIELDS = [
     "item_type", "title", "authors", "year", "venue", "volume", "issue",
@@ -125,6 +138,17 @@ def init_db() -> None:
     conn = connect()
     conn.execute("PRAGMA journal_mode = WAL")
     conn.executescript(SCHEMA)
+    conn.execute(FTS_SCHEMA.format(name="items_fts"))
+    fts_columns = {r["name"] for r in conn.execute("PRAGMA table_info(items_fts)")}
+    if "supplementary" not in fts_columns:
+        # Libraries created before supplementary files: rebuild the index with the new column.
+        conn.execute(FTS_SCHEMA.format(name="items_fts_new"))
+        conn.execute(
+            "INSERT INTO items_fts_new (rowid, title, authors, abstract, venue, extra, fulltext, "
+            "supplementary) SELECT rowid, title, authors, abstract, venue, extra, fulltext, '' "
+            "FROM items_fts")
+        conn.execute("DROP TABLE items_fts")
+        conn.execute("ALTER TABLE items_fts_new RENAME TO items_fts")
     columns = {r["name"] for r in conn.execute("PRAGMA table_info(items)")}
     if "to_read_at" not in columns:
         # When the item was put on the reading list (NULL: not on it).
@@ -188,7 +212,8 @@ def fts_query(q: str) -> str | None:
 # Items
 # --------------------------------------------------------------------------- #
 
-def _row_to_item(row: sqlite3.Row, tags: list[str], collections: list[int]) -> dict:
+def _row_to_item(row: sqlite3.Row, tags: list[str], collections: list[int],
+                 supplementary: list[dict]) -> dict:
     item = dict(row)
     item["annotation_count"] = item.pop("annotation_count", 0) or 0
     item["to_read"] = bool(item.get("to_read_at"))
@@ -201,14 +226,16 @@ def _row_to_item(row: sqlite3.Row, tags: list[str], collections: list[int]) -> d
     item.pop("file_hash", None)
     item["tags"] = sorted(tags, key=str.lower)
     item["collections"] = collections
+    item["supplementary"] = supplementary
     return item
 
 
-def _relations(conn, ids: list[int]) -> tuple[dict, dict]:
+def _relations(conn, ids: list[int]) -> tuple[dict, dict, dict]:
     tags: dict[int, list[str]] = {i: [] for i in ids}
     cols: dict[int, list[int]] = {i: [] for i in ids}
+    supp: dict[int, list[dict]] = {i: [] for i in ids}
     if not ids:
-        return tags, cols
+        return tags, cols, supp
     marks = ",".join("?" * len(ids))
     for r in conn.execute(
         f"SELECT it.item_id, t.name FROM item_tags it JOIN tags t ON t.id = it.tag_id "
@@ -218,7 +245,15 @@ def _relations(conn, ids: list[int]) -> tuple[dict, dict]:
         f"SELECT item_id, collection_id FROM item_collections WHERE item_id IN ({marks}) "
         f"ORDER BY rowid", ids):
         cols[r[0]].append(r[1])
-    return tags, cols
+    for r in conn.execute(
+        f"SELECT id, item_id, file_name, original_name, file_size, added_at FROM supplementary "
+        f"WHERE item_id IN ({marks}) ORDER BY id", ids):
+        supp[r["item_id"]].append({
+            "id": r["id"], "name": r["original_name"], "size": r["file_size"],
+            "added_at": r["added_at"],
+            "file_path": r["file_name"] if storage.is_in_place(r["file_name"]) else None,
+        })
+    return tags, cols, supp
 
 
 _ANN_COUNT = "(SELECT COUNT(*) FROM annotations a WHERE a.item_id = i.id) AS annotation_count"
@@ -229,8 +264,8 @@ def get_item(conn, item_id: int) -> dict | None:
                        (item_id,)).fetchone()
     if row is None:
         return None
-    tags, cols = _relations(conn, [item_id])
-    return _row_to_item(row, tags[item_id], cols[item_id])
+    tags, cols, supp = _relations(conn, [item_id])
+    return _row_to_item(row, tags[item_id], cols[item_id], supp[item_id])
 
 
 def get_item_file(conn, item_id: int) -> tuple[str | None, str | None]:
@@ -275,8 +310,8 @@ def list_items(conn, q: str | None = None, collection_id: int | None = None,
         sql += " WHERE " + " AND ".join(where)
     sql += " ORDER BY " + SORTS.get(sort, SORTS["added"])
     rows = conn.execute(sql, params).fetchall()
-    tags, cols = _relations(conn, [r["id"] for r in rows])
-    items = [_row_to_item(r, tags[r["id"]], cols[r["id"]]) for r in rows]
+    tags, cols, supp = _relations(conn, [r["id"] for r in rows])
+    items = [_row_to_item(r, tags[r["id"]], cols[r["id"]], supp[r["id"]]) for r in rows]
     fq = fts_query(q) if q else None
     if fq and items:
         matches = search_snippets(conn, fq)
@@ -289,7 +324,8 @@ HL_START, HL_END = "\x02", "\x03"   # highlight markers in snippets (rendered as
 
 # Columns of items_fts that get a snippet, in order of preference. Matches in the title
 # or authors are already visible in the list, so they need none.
-_SNIPPET_COLUMNS = [(5, "fulltext", 32), (2, "abstract", 32), (4, "notes", 24)]
+_SNIPPET_COLUMNS = [(5, "fulltext", 32), (2, "abstract", 32), (4, "notes", 24),
+                    (6, "supplementary", 32)]
 
 
 def clean_snippet(text: str) -> str:
@@ -415,16 +451,57 @@ def set_file(conn, item_id: int, file: dict, fulltext: str) -> None:
     conn.commit()
 
 
-def delete_item(conn, item_id: int) -> str | None:
-    """Delete the item and return its file name (if any) so the caller can remove it."""
+def delete_item(conn, item_id: int) -> list[str]:
+    """Delete the item and return the names of its files (PDF and supplementary) so the
+    caller can remove them."""
     row = conn.execute("SELECT file_name FROM items WHERE id = ?", (item_id,)).fetchone()
     if row is None:
-        return None
+        return []
+    files = [row["file_name"]] if row["file_name"] else []
+    files += [r[0] for r in conn.execute(
+        "SELECT file_name FROM supplementary WHERE item_id = ?", (item_id,))]
     conn.execute("DELETE FROM items WHERE id = ?", (item_id,))
     conn.execute("DELETE FROM items_fts WHERE rowid = ?", (item_id,))
     conn.execute("DELETE FROM tags WHERE id NOT IN (SELECT tag_id FROM item_tags)")
     conn.commit()
-    return row["file_name"]
+    return files
+
+
+# --------------------------------------------------------------------------- #
+# Supplementary information
+# --------------------------------------------------------------------------- #
+
+def add_supplementary(conn, item_id: int, file: dict, original_name: str,
+                      fulltext: str = "") -> int:
+    cur = conn.execute(
+        "INSERT INTO supplementary (item_id, file_name, original_name, file_size, file_hash, "
+        "fulltext, added_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
+        (item_id, file["name"], original_name, file["size"], file["hash"], fulltext, now()))
+    conn.execute("UPDATE items SET modified_at = ? WHERE id = ?", (now(), item_id))
+    reindex(conn, item_id)
+    conn.commit()
+    return cur.lastrowid
+
+
+def get_supplementary(conn, supp_id: int) -> sqlite3.Row | None:
+    return conn.execute("SELECT * FROM supplementary WHERE id = ?", (supp_id,)).fetchone()
+
+
+def find_supplementary(conn, item_id: int, file_hash: str) -> int | None:
+    row = conn.execute("SELECT id FROM supplementary WHERE item_id = ? AND file_hash = ?",
+                       (item_id, file_hash)).fetchone()
+    return row["id"] if row else None
+
+
+def delete_supplementary(conn, supp_id: int) -> tuple[int, str] | None:
+    """Delete the record; return (item id, file name) so the caller can remove the file."""
+    row = get_supplementary(conn, supp_id)
+    if row is None:
+        return None
+    conn.execute("DELETE FROM supplementary WHERE id = ?", (supp_id,))
+    reindex(conn, row["item_id"])
+    conn.commit()
+    return row["item_id"], row["file_name"]
 
 
 def reindex(conn, item_id: int, fulltext: str | None = None) -> None:
@@ -438,11 +515,14 @@ def reindex(conn, item_id: int, fulltext: str | None = None) -> None:
         for r in conn.execute("SELECT text, comment FROM annotations WHERE item_id = ?", (item_id,)))
     extra = " ".join(filter(None, [item.get("doi"), item.get("arxiv_id"), item.get("citekey"),
                                    item.get("notes"), " ".join(item["tags"]), annotations]))
+    supplementary = "\n".join(r[0] for r in conn.execute(
+        "SELECT fulltext FROM supplementary WHERE item_id = ? AND fulltext != '' ORDER BY id",
+        (item_id,)))
     conn.execute(
-        "INSERT INTO items_fts (rowid, title, authors, abstract, venue, extra, fulltext) "
-        "VALUES (?, ?, ?, ?, ?, ?, ?)",
+        "INSERT INTO items_fts (rowid, title, authors, abstract, venue, extra, fulltext, "
+        "supplementary) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
         (item_id, item["title"], authors_to_text(item["authors"]), item.get("abstract") or "",
-         item.get("venue") or "", extra, fulltext))
+         item.get("venue") or "", extra, fulltext, supplementary))
 
 
 # --------------------------------------------------------------------------- #

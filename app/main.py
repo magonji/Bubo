@@ -272,7 +272,8 @@ def update_item(item_id: int, body: ItemIn, conn: Conn):
 @app.delete("/api/items/{item_id}", dependencies=[Auth])
 def delete_item(item_id: int, conn: Conn):
     _item_or_404(conn, item_id)
-    storage.delete(db.delete_item(conn, item_id))
+    for name in db.delete_item(conn, item_id):
+        storage.delete(name)
     return {"ok": True}
 
 
@@ -385,6 +386,75 @@ def get_annotated_file(item_id: int, conn: Conn):
     filename = f"{path.stem} (annotated).pdf"
     return Response(data, media_type="application/pdf",
                     headers={"Content-Disposition": _content_disposition("attachment", filename)})
+
+
+# --------------------------------------------------------------------------- #
+# Supplementary information
+# --------------------------------------------------------------------------- #
+
+# Shown in the browser; anything else (HTML and SVG included) is always downloaded.
+INLINE_TYPES = {".pdf": "application/pdf", ".png": "image/png", ".jpg": "image/jpeg",
+                ".jpeg": "image/jpeg", ".gif": "image/gif", ".webp": "image/webp",
+                ".txt": "text/plain; charset=utf-8", ".csv": "text/plain; charset=utf-8"}
+SUPP_EXT_RE = re.compile(r"\.[a-z0-9]{1,10}")
+
+
+@app.post("/api/items/{item_id}/supplementary", dependencies=[Auth])
+def add_supplementary(item_id: int, conn: Conn, file: UploadFile = File(...)):
+    """Attach a supplementary file (any type) to a paper."""
+    _item_or_404(conn, item_id)
+    data = file.file.read()
+    if not data:
+        raise HTTPException(422, "The file is empty")
+    name = (file.filename or "").strip() or "Supplementary information"
+    file_hash = pdf.sha256(data)
+    row = conn.execute("SELECT file_hash FROM items WHERE id = ?", (item_id,)).fetchone()
+    if row["file_hash"] == file_hash:
+        raise HTTPException(409, "This is the paper's own PDF")
+    if db.find_supplementary(conn, item_id, file_hash):
+        return {"status": "duplicate", "item": db.get_item(conn, item_id)}
+    is_pdf = pdf.is_pdf(data)
+    ext = ".pdf" if is_pdf else Path(name).suffix.lower()
+    if not SUPP_EXT_RE.fullmatch(ext):
+        ext = ".bin"
+    fulltext = ""
+    if is_pdf:
+        try:
+            fulltext = pdf.analyze(data).fulltext
+        except Exception:  # an unreadable PDF is still worth keeping
+            fulltext = ""
+    db.add_supplementary(conn, item_id, storage.save_new(data, file_hash, ext), name, fulltext)
+    storage.sync_item(conn, item_id)
+    return {"status": "added", "item": db.get_item(conn, item_id)}
+
+
+def _supplementary_or_404(conn, supp_id: int):
+    row = db.get_supplementary(conn, supp_id)
+    if row is None:
+        raise HTTPException(404, "Supplementary file not found")
+    return row
+
+
+@app.get("/api/supplementary/{supp_id}/file", dependencies=[Auth])
+def get_supplementary_file(supp_id: int, conn: Conn, download: bool = False):
+    row = _supplementary_or_404(conn, supp_id)
+    path = storage.abs_path(row["file_name"])
+    if not path.exists():
+        raise HTTPException(404, "The file is missing from the papers folder")
+    media = INLINE_TYPES.get(path.suffix.lower())
+    inline = media is not None and not download
+    return FileResponse(path, media_type=media or "application/octet-stream", filename=path.name,
+                        content_disposition_type="inline" if inline else "attachment",
+                        headers={"X-Content-Type-Options": "nosniff"})
+
+
+@app.delete("/api/supplementary/{supp_id}", dependencies=[Auth])
+def delete_supplementary(supp_id: int, conn: Conn):
+    _supplementary_or_404(conn, supp_id)
+    item_id, name = db.delete_supplementary(conn, supp_id)
+    storage.delete(name)
+    storage.sync_item(conn, item_id)   # "SI 2" becomes "SI" when the first one goes
+    return db.get_item(conn, item_id)
 
 
 @app.post("/api/items/{item_id}/find-pdf", dependencies=[Auth])

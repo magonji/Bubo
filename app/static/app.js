@@ -46,7 +46,8 @@ document.querySelectorAll("i[data-icon]").forEach((el) => { el.outerHTML = icon(
 
 // Search excerpts arrive with \x02…\x03 around the matched words.
 const highlight = (s) => esc(s).replace(/\x02/g, "<mark>").replace(/\x03/g, "</mark>");
-const MATCH_LABELS = { fulltext: "Full text", abstract: "Abstract", notes: "Notes and annotations" };
+const MATCH_LABELS = { fulltext: "Full text", abstract: "Abstract", notes: "Notes and annotations",
+  supplementary: "Supplementary information" };
 
 const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) =>
   ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]);
@@ -504,10 +505,13 @@ function cell(c, i) {
         i.annotation_count && `${i.annotation_count} annotation${i.annotation_count > 1 ? "s" : ""}`].filter(Boolean);
       return `<td class="col-notes icon-col notes"${parts.length ? ` title="${parts.join(", ")}"` : ""}>${parts.length ? icon("note") : ""}</td>`;
     }
-    case "pdf":
+    case "pdf": {
+      const si = i.supplementary.length
+        ? ` (and ${i.supplementary.length} supplementary file${i.supplementary.length > 1 ? "s" : ""})` : "";
       return i.has_file
-        ? `<td class="col-pdf icon-col pdf" title="Open PDF">${icon("file")}</td>`
-        : `<td class="col-pdf icon-col pdf" title="Find PDF"><span class="missing">${icon("file-search")}</span></td>`;
+        ? `<td class="col-pdf icon-col pdf" title="Open PDF${si}">${icon("file")}</td>`
+        : `<td class="col-pdf icon-col pdf" title="Find PDF${si}"><span class="missing">${icon("file-search")}</span></td>`;
+    }
   }
   return "";
 }
@@ -771,6 +775,7 @@ function renderDetail(item) {
     </div>
     <div id="detail-matches"></div>
     <div id="detail-annotations"></div>
+    ${supplementarySection(item)}
     <form id="item-form">
       <div class="field"><label>Item type</label><select name="item_type">
         ${Object.entries(TYPES).map(([k, v]) => `<option value="${k}" ${k === item.item_type ? "selected" : ""}>${v}</option>`).join("")}
@@ -805,6 +810,7 @@ function renderDetail(item) {
     </form>`;
 
   if (item.annotation_count) loadDetailAnnotations(item);
+  $("#detail-supplementary").addEventListener("click", (e) => supplementaryAction(e, item));
   if (state.q && item.has_file) loadDetailMatches(item, state.q);
   box.querySelector(".buttons").addEventListener("click", (e) => {
     const a = e.target.closest("[data-a]")?.dataset.a;
@@ -967,6 +973,60 @@ async function loadDetailMatches(item, q) {
     const hit = e.target.closest(".detail-match");
     if (hit) openViewer(item, null, { page: Number(hit.dataset.page), terms: r.terms });
   });
+}
+
+// Supplementary information: files of any type kept with the paper. PDFs, images and
+// text open in a new tab; other files are downloaded.
+function supplementarySection(item) {
+  const files = item.supplementary;
+  return `<div class="field" id="detail-supplementary">
+    <label>Supplementary information${files.length ? ` (${files.length})` : ""}</label>
+    ${files.length ? `<ul class="supp-list">${files.map((s) => `
+      <li data-id="${s.id}">
+        ${icon("file")}
+        <a href="/api/supplementary/${s.id}/file" target="_blank" rel="noopener" class="name"
+          title="${esc(s.file_path ? `papers/${s.file_path}` : s.name)}">${esc(s.name)}</a>
+        <span class="muted size">${s.size ? fmtSize(s.size) : ""}</span>
+        <a class="supp-btn" href="/api/supplementary/${s.id}/file?download=true" title="Download" aria-label="Download ${esc(s.name)}">${icon("download")}</a>
+        <button type="button" class="supp-btn" data-supp="remove" title="Remove" aria-label="Remove ${esc(s.name)}">${icon("x")}</button>
+      </li>`).join("")}</ul>` : ""}
+    <button type="button" class="link-btn" data-supp="add">${icon("plus")} Add supplementary files</button>
+  </div>`;
+}
+
+async function supplementaryAction(e, item) {
+  const action = e.target.closest("[data-supp]")?.dataset.supp;
+  if (action === "add") {
+    const input = $("#supp-input");
+    input.onchange = async () => {
+      const files = [...input.files];
+      input.value = "";
+      if (files.length) await addSupplementary(item.id, files);
+    };
+    input.click();
+  } else if (action === "remove") {
+    const id = Number(e.target.closest("li").dataset.id);
+    const s = item.supplementary.find((x) => x.id === id);
+    if (!confirm(`Remove “${s.name}” from this paper? The file is deleted.`)) return;
+    try { await api(`/api/supplementary/${id}`, { method: "DELETE" }); toast("Supplementary file removed"); refresh(); }
+    catch (err) { toast(err.message, true); }
+  }
+}
+
+async function addSupplementary(itemId, files) {
+  const t = toast(`Uploading ${files.length > 1 ? `${files.length} files` : files[0].name}…`, false, 120000);
+  let added = 0;
+  try {
+    for (const file of files) {
+      const fd = new FormData();
+      fd.append("file", file);
+      const r = await api(`/api/items/${itemId}/supplementary`, { method: "POST", body: fd });
+      if (r.status === "added") added++;
+      else toast(`“${file.name}” is already attached to this paper`);
+    }
+    if (added) toast(added > 1 ? `${added} supplementary files added` : "Supplementary file added");
+  } catch (err) { toast(err.message, true); }
+  finally { t.remove(); refresh(); }
 }
 
 async function loadDetailAnnotations(item) {
@@ -1223,7 +1283,12 @@ async function quickAdd(identifier) {
 // --------------------------------------------------------------------------
 // Upload dialog: drag and drop (or choose) PDFs, then upload them with progress
 // --------------------------------------------------------------------------
-const upload = { entries: [], busy: false, done: false };
+const upload = { entries: [], busy: false, done: false, seq: 0, context: null, library: null };
+
+// File names that usually mean supplementary material: "SI", "ESI", "ESM", "supp", "suppl",
+// "supplementary", "supporting information", Elsevier's "mmc1"...
+const SI_NAME = /(^|\s)(si|esi|esm|supp|suppl|supplement|supplementary|supplemental|supporting|mmc\d+)(\s|\d|$)/i;
+const looksLikeSI = (name) => SI_NAME.test(name.replace(/\.[^.]+$/, "").replace(/[_\-.()[\]]+/g, " "));
 const isPdf = (f) => f.type === "application/pdf" || /\.pdf$/i.test(f.name);
 const fmtSize = (n) => (n >= 1048576 ? `${(n / 1048576).toFixed(1)} MB` : `${Math.max(1, Math.round(n / 1024))} KB`);
 const UPLOAD_CONCURRENCY = 2;
@@ -1245,6 +1310,9 @@ function openUploadDialog(files = [], collectionId = currentCollection()) {
   if (dlg.open) return addUploadFiles(files);
   upload.entries = [];
   upload.done = false;
+  upload.library = null;
+  // A paper open in the item pane is offered as the owner of supplementary files.
+  upload.context = state.selectedIds.size === 1 ? state.items.find((i) => i.id === state.selected) || null : null;
   dlg.innerHTML = `
     <h3 id="upload-title">Add papers</h3>
     <form class="add-id" id="add-id-form">
@@ -1256,14 +1324,15 @@ function openUploadDialog(files = [], collectionId = currentCollection()) {
       <button type="submit" class="primary" id="add-id-submit">Add</button>
     </form>
     <div class="add-id-hint muted" id="add-id-hint">Paste an identifier: the details are filled in automatically.</div>
-    <div class="add-or">or add PDFs</div>
+    <div class="add-or">or add PDFs and supplementary files</div>
     <div class="dropzone" id="dropzone" role="button" tabindex="0" aria-describedby="dropzone-hint">
       ${icon("upload")}
       ${TOUCH ? "<strong>Choose PDFs</strong>" : "<strong>Drag and drop PDFs here</strong>"}
       <span id="dropzone-hint" class="muted">${TOUCH ? "Tap to pick files from your device" : "or click to choose files"}</span>
-      <input type="file" id="upload-input" accept="application/pdf,.pdf" multiple hidden>
+      <input type="file" id="upload-input" multiple hidden>
     </div>
     <ul class="upload-list" id="upload-list"></ul>
+    <datalist id="upload-papers"></datalist>
     <div class="field upload-target"><label for="upload-collection">Add to collection</label>
       <select id="upload-collection">${collectionSelectOptions(collectionId)}</select></div>
     <label class="upload-toread" title="The default can be changed in Settings"><input type="checkbox" class="switch" role="switch" id="upload-toread"
@@ -1290,6 +1359,13 @@ function openUploadDialog(files = [], collectionId = currentCollection()) {
     zone.classList.toggle("over", false);
     resetWindowDrag();
     addUploadFiles(e.dataTransfer.files);
+  });
+  $("#upload-list").addEventListener("change", (e) => {
+    const row = e.target.closest("li");
+    const entry = row && upload.entries[Number(row.dataset.i)];
+    if (!entry) return;
+    if (e.target.matches(".upload-role select")) setUploadRole(entry, e.target.value);
+    else if (e.target.matches(".upload-pick")) pickUploadPaper(entry, e.target.value);
   });
   $("#upload-list").addEventListener("click", (e) => {
     const row = e.target.closest("li");
@@ -1361,17 +1437,88 @@ function addUploadFiles(fileList) {
   if (!files.length) return;
   if (upload.busy) return toast("Please wait until the current upload has finished", true);
   if (upload.done) { upload.entries = []; upload.done = false; }
+  const added = [];
   for (const file of files) {
     const known = upload.entries.some((x) => x.file && x.file.name === file.name && x.file.size === file.size);
-    if (!known) upload.entries.push({ file, status: isPdf(file) ? "ready" : "invalid", progress: 0 });
+    if (known) continue;
+    const pdf = isPdf(file);
+    // Anything that is not a PDF can only be supplementary material.
+    const entry = { key: ++upload.seq, file, pdf, role: !pdf || looksLikeSI(file.name) ? "si" : "paper",
+                    siFor: null, status: file.size ? "ready" : "invalid", progress: 0 };
+    upload.entries.push(entry);
+    added.push(entry);
+  }
+  // Guess which paper new supplementary files belong to: the only paper in the upload,
+  // otherwise the paper open in the item pane.
+  const papers = uploadPapers();
+  for (const x of added) {
+    if (x.role !== "si") continue;
+    if (papers.length === 1) x.siFor = `batch:${papers[0].key}`;
+    else if (!papers.length && upload.context) x.siFor = `item:${upload.context.id}`;
   }
   renderUploadList();
 }
 
+// PDFs in the current upload that are papers (not supplementary material).
+const uploadPapers = () => upload.entries.filter((x) => x.file && x.role === "paper" && x.status === "ready");
+const uploadable = (x) => x.status === "ready" && (x.role === "paper" || !!x.siFor);
+
+function setUploadRole(entry, value) {
+  entry.picking = false;
+  if (value === "paper") { entry.role = "paper"; entry.siFor = null; }
+  else if (value === "pick") { entry.role = "si"; entry.picking = true; loadUploadLibrary(); }
+  else { entry.role = "si"; entry.siFor = value || null; }
+  renderUploadList();
+  if (entry.picking) $(`#upload-list li[data-i="${upload.entries.indexOf(entry)}"] .upload-pick`)?.focus();
+}
+
+async function loadUploadLibrary() {
+  if (upload.library) return;
+  upload.library = [];
+  try { upload.library = await api("/api/items?sort=title"); } catch { return; }
+  $("#upload-papers").innerHTML = upload.library.map((i) =>
+    `<option value="${esc(paperLabel(i))}"></option>`).join("");
+}
+const paperLabel = (i) => `${i.title || "(untitled)"} (${[authorsShort(i.authors), i.year].filter(Boolean).join(", ")})`;
+
+function pickUploadPaper(entry, label) {
+  const item = (upload.library || []).find((i) => paperLabel(i) === label);
+  if (!item) return;
+  entry.siFor = `item:${item.id}`;
+  entry.siTitle = item.title;
+  entry.picking = false;
+  renderUploadList();
+}
+
+function roleSelect(x, i) {
+  const short = (s) => (s.length > 60 ? s.slice(0, 57) + "…" : s);
+  const options = [];
+  if (x.pdf) options.push(["paper", "Paper"]);
+  for (const p of uploadPapers()) if (p !== x) options.push([`batch:${p.key}`, `Supplementary information for ${short(p.file.name)}`]);
+  if (upload.context) options.push([`item:${upload.context.id}`, `Supplementary information for “${short(upload.context.title || "(untitled)")}”`]);
+  if (x.siFor?.startsWith("item:") && !options.some(([v]) => v === x.siFor)) {
+    options.push([x.siFor, `Supplementary information for “${short(x.siTitle || "a paper")}”`]);
+  }
+  options.push(["pick", "Supplementary information for another paper…"]);
+  const value = x.picking ? "pick" : x.role === "paper" ? "paper" : x.siFor || "";
+  return `<div class="upload-role">
+    <select aria-label="What ${esc(x.file.name)} is">
+      ${value === "" ? `<option value="" selected disabled>Supplementary information for…</option>` : ""}
+      ${options.map(([v, label]) => `<option value="${esc(v)}" ${v === value ? "selected" : ""}>${esc(label)}</option>`).join("")}
+    </select>
+    ${x.picking ? `<input class="upload-pick" list="upload-papers" placeholder="Type to find the paper in your library"
+      aria-label="Paper these supplementary files belong to" autocomplete="off">` : ""}
+  </div>`;
+}
+
 function uploadStatus(x) {
   switch (x.status) {
-    case "ready": return ["", "Ready"];
-    case "invalid": return ["err", "Not a PDF"];
+    case "ready":
+      if (x.role === "si" && !x.siFor) return ["err", "Choose its paper"];
+      return ["", x.role === "si" ? "Ready (SI)" : "Ready"];
+    case "invalid": return ["err", "Empty file"];
+    case "si-added": return ["ok", "Added as supplementary information"];
+    case "si-duplicate": return ["warn", "Already attached to that paper"];
     case "uploading": return ["", `Uploading ${Math.round(x.progress * 100)}%`];
     case "processing": return ["", "Looking up metadata…"];
     case "created":
@@ -1386,6 +1533,12 @@ function uploadStatus(x) {
 function renderUploadList() {
   const list = $("#upload-list");
   if (!list) return;
+  // A supplementary file loses its owner if that paper is removed or becomes SI itself.
+  // (Only while choosing: once uploading starts, the papers are no longer "ready".)
+  if (!upload.busy && !upload.done) {
+    const paperKeys = new Set(uploadPapers().map((p) => `batch:${p.key}`));
+    for (const x of upload.entries) if (x.siFor?.startsWith("batch:") && !paperKeys.has(x.siFor)) x.siFor = null;
+  }
   list.innerHTML = upload.entries.map((x, i) => {
     const [cls, text] = uploadStatus(x);
     const label = x.file ? x.file.name : (x.title || x.ident);
@@ -1398,17 +1551,20 @@ function renderUploadList() {
       <span class="size muted">${x.file ? fmtSize(x.file.size) : esc(x.kind)}</span>
       <span class="status ${cls}">${text}</span>
       ${removable ? `<button type="button" class="upload-remove" title="Remove from list" aria-label="Remove ${esc(x.file.name)}">${icon("x")}</button>` : "<span></span>"}
+      ${x.file && x.status === "ready" && !upload.busy ? roleSelect(x, i) : ""}
       ${x.status === "uploading" ? `<div class="progress"><span style="width:${Math.round(x.progress * 100)}%"></span></div>` : ""}
     </li>`;
   }).join("");
 
-  const ready = upload.entries.filter((x) => x.status === "ready").length;
+  const ready = upload.entries.filter(uploadable);
+  const allPdfs = ready.every((x) => x.pdf);
   const start = $("#upload-start");
-  start.classList.toggle("hidden", upload.done || !ready);
-  start.disabled = upload.busy || !ready;
-  start.textContent = upload.busy ? "Uploading…" : ready ? `Upload ${ready} PDF${ready > 1 ? "s" : ""}` : "Upload";
+  start.classList.toggle("hidden", upload.done || !ready.length);
+  start.disabled = upload.busy || !ready.length;
+  start.textContent = upload.busy ? "Uploading…" : ready.length
+    ? `Upload ${ready.length} ${allPdfs ? "PDF" : "file"}${ready.length > 1 ? "s" : ""}` : "Upload";
   const finished = upload.done || upload.entries.some((x) => x.ident && x.status !== "processing");
-  $("#upload-close").textContent = finished && !ready ? "Close" : "Cancel";
+  $("#upload-close").textContent = finished && !ready.length ? "Close" : "Cancel";
   $("#upload-close").disabled = upload.busy;
   $("#upload-collection").disabled = upload.busy || upload.done;
   $("#upload-manual").disabled = upload.busy;
@@ -1416,10 +1572,11 @@ function renderUploadList() {
   $("#dropzone").classList.toggle("disabled", upload.busy);
 }
 
-function uploadOne(entry, collectionId, toRead) {
+// Sends one file with progress; `done` receives the JSON response.
+function sendFile(entry, url, fd, done) {
   return new Promise((resolve) => {
     const xhr = new XMLHttpRequest();
-    xhr.open("POST", "/api/items/upload");
+    xhr.open("POST", url);
     xhr.responseType = "json";
     xhr.upload.onprogress = (e) => {
       if (!e.lengthComputable) return;
@@ -1433,32 +1590,57 @@ function uploadOne(entry, collectionId, toRead) {
     xhr.onload = () => {
       if (xhr.status === 401) { showLogin(); return fail("Not authenticated"); }
       if (xhr.status >= 400) return fail(xhr.response?.detail || `Upload failed (${xhr.status})`);
-      const r = xhr.response.results[0];
-      entry.status = r.status;
-      entry.identified = r.identified;
-      entry.message = r.message;
-      entry.itemId = r.id;
+      done(xhr.response);
       resolve();
     };
-    const fd = new FormData();
-    fd.append("files", entry.file);
-    if (collectionId != null) fd.append("collection_id", collectionId);
-    if (toRead) fd.append("to_read", "true");
     entry.status = "uploading";
     renderUploadList();
     xhr.send(fd);
   });
 }
 
+function uploadOne(entry, collectionId, toRead) {
+  const fd = new FormData();
+  fd.append("files", entry.file);
+  if (collectionId != null) fd.append("collection_id", collectionId);
+  if (toRead) fd.append("to_read", "true");
+  return sendFile(entry, "/api/items/upload", fd, (res) => {
+    const r = res.results[0];
+    Object.assign(entry, { status: r.status, identified: r.identified, message: r.message, itemId: r.id });
+  });
+}
+
+function uploadSupplementary(entry) {
+  let itemId = null;
+  if (entry.siFor.startsWith("batch:")) {
+    const paper = upload.entries.find((x) => `batch:${x.key}` === entry.siFor);
+    if (paper && ["created", "attached", "duplicate"].includes(paper.status)) itemId = paper.itemId;
+  } else itemId = Number(entry.siFor.slice(5));
+  if (!itemId) {
+    Object.assign(entry, { status: "error", message: "Its paper was not added" });
+    return Promise.resolve();
+  }
+  const fd = new FormData();
+  fd.append("file", entry.file);
+  return sendFile(entry, `/api/items/${itemId}/supplementary`, fd, (r) => {
+    Object.assign(entry, { status: r.status === "added" ? "si-added" : "si-duplicate", itemId });
+  });
+}
+
 async function startUpload() {
-  const queue = upload.entries.filter((x) => x.status === "ready");
-  if (!queue.length || upload.busy) return;
+  const ready = upload.entries.filter(uploadable);
+  if (!ready.length || upload.busy) return;
   const cid = $("#upload-collection").value ? Number($("#upload-collection").value) : null;
   upload.busy = true;
   renderUploadList();
   const toRead = $("#upload-toread").checked;
-  const worker = async () => { while (queue.length) await uploadOne(queue.shift(), cid, toRead); };
-  await Promise.all(Array.from({ length: UPLOAD_CONCURRENCY }, worker));
+  const run = async (queue, send, workers) => {
+    const worker = async () => { while (queue.length) await send(queue.shift()); };
+    await Promise.all(Array.from({ length: workers }, worker));
+  };
+  await run(ready.filter((x) => x.role === "paper"), (x) => uploadOne(x, cid, toRead), UPLOAD_CONCURRENCY);
+  // One at a time, so that "SI", "SI 2"... follow the order of the list.
+  await run(ready.filter((x) => x.role === "si"), uploadSupplementary, 1);
   upload.busy = false;
   upload.done = true;
   renderUploadList();
@@ -1469,6 +1651,7 @@ async function startUpload() {
   if (count("created")) parts.push(`${count("created")} added`);
   if (count("attached")) parts.push(`${count("attached")} attached to existing items`);
   if (count("duplicate")) parts.push(`${count("duplicate")} already in your library`);
+  if (count("si-added")) parts.push(`${count("si-added")} supplementary file${count("si-added") > 1 ? "s" : ""} attached`);
   if (count("error")) parts.push(`${count("error")} failed`);
   $("#upload-summary").textContent = (parts.join(" · ") || "Nothing was added") +
     (unknown ? `. Check the ${unknown} item${unknown > 1 ? "s" : ""} whose metadata was not recognised.` : ".");
