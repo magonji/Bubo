@@ -61,8 +61,9 @@ x86-64 and ARM (such as a Raspberry Pi), so the server needs only two files:
 
 ```bash
 mkdir bubo && cd bubo
-curl -fsSLO https://raw.githubusercontent.com/magonji/Bubo/main/docker-compose.yml
-curl -fsSL https://raw.githubusercontent.com/magonji/Bubo/main/.env.example -o .env
+src=https://raw.githubusercontent.com/magonji/Bubo/main
+curl -fsSLO $src/docker-compose.yml
+curl -fsSL $src/.env.example -o .env
 nano .env                         # set BUBO_PASSWORD and BUBO_DATA_DIR
 mkdir -p /path/to/your/data       # the data folder must exist (see below)
 docker compose up -d
@@ -70,9 +71,17 @@ docker compose up -d
 
 Open `http://localhost:2826`.
 
-**Updating:** `docker compose pull && docker compose up -d`. The `latest` tag follows the main
-branch; to stay on a particular release, change it in `docker-compose.yml` to a version such
-as `ghcr.io/magonji/bubo:1.0`.
+**Updating:** `docker compose pull && docker compose up -d`. The library in the data folder is
+kept, and the database is upgraded automatically if needed.
+
+The `latest` tag follows the main branch and is rebuilt a few minutes after each change. Every
+build is also tagged with its commit (for example `sha-3b6e58d`), and releases tagged
+`vX.Y.Z` get `X.Y.Z` and `X.Y` tags. To stay on one of them, change the `image:` line in
+`docker-compose.yml`; the [package page](https://github.com/magonji/Bubo/pkgs/container/bubo)
+lists the available tags.
+
+If you set Bubo up earlier by cloning the repository, run `git pull` once to get the new
+`docker-compose.yml`, then `docker compose pull && docker compose up -d`.
 
 To build the image yourself instead (for example after changing the code), clone the
 repository, replace `image:` with `build: .` in `docker-compose.yml` and run
