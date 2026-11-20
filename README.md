@@ -93,7 +93,9 @@ docker compose up -d
 Open `http://localhost:2826`.
 
 **Updating:** `docker compose pull && docker compose up -d`. The library in the data folder is
-kept, and the database is upgraded automatically if needed.
+kept, and the database is upgraded automatically if needed. After updating from a version
+without figure extraction, run `docker compose exec bubo python -m app.cli figures` once to
+find the figures of the papers you already have (see [Maintenance commands](#maintenance-commands)).
 
 The `latest` tag follows the main branch and is rebuilt a few minutes after each change. Every
 build is also tagged with its commit (for example `sha-3b6e58d`), and releases tagged

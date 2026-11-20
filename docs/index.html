@@ -208,6 +208,8 @@ footer a { color: var(--muted); }
   <symbol id="i-file" viewBox="0 0 24 24"><path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z"/><path d="M14 3v5h5M9 13h6M9 17h4"/></symbol>
   <symbol id="i-disk" viewBox="0 0 24 24"><path d="M22 12H2M5.5 5h13L22 12v6a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2v-6z"/><path d="M6 16h.01M10 16h.01"/></symbol>
   <symbol id="i-copy" viewBox="0 0 24 24"><rect x="9" y="9" width="12" height="12" rx="2"/><path d="M5 15H4a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1h10a1 1 0 0 1 1 1v1"/></symbol>
+  <symbol id="i-clip" viewBox="0 0 24 24"><path d="M20 11.5l-7.8 7.8a5 5 0 0 1-7.1-7.1l8.1-8.1a3.4 3.4 0 0 1 4.8 4.8l-8.1 8.1a1.7 1.7 0 0 1-2.4-2.4l7.4-7.4"/></symbol>
+  <symbol id="i-phone" viewBox="0 0 24 24"><rect x="6" y="2.5" width="12" height="19" rx="2.5"/><path d="M10.5 18.5h3"/></symbol>
   <symbol id="i-tag" viewBox="0 0 24 24"><path d="M20.6 13.4 13.4 20.6a2 2 0 0 1-2.8 0L3 13V3h10l7.6 7.6a2 2 0 0 1 0 2.8z"/><path d="M7.5 7.5h.01"/></symbol>
 </svg>
 
@@ -288,6 +290,7 @@ footer a { color: var(--muted); }
           <ul>
             <li><svg class="i"><use href="#i-check"/></svg> Dropped PDFs are identified from their DOI or arXiv stamp</li>
             <li><svg class="i"><use href="#i-check"/></svg> Find PDF looks on arXiv, Unpaywall and the publisher's page</li>
+            <li><svg class="i"><use href="#i-check"/></svg> Mark a file as supplementary information for its paper as you upload it</li>
             <li><svg class="i"><use href="#i-check"/></svg> Duplicates are detected by file, DOI and arXiv ID</li>
           </ul>
         </div>
@@ -299,7 +302,7 @@ footer a { color: var(--muted); }
         <div class="copy">
           <p class="eyebrow">Organise</p>
           <h2>A reading list that works like a queue</h2>
-          <p>Drag papers onto the reading list, or have new papers go there straight away. Order it by when each paper was added, oldest or newest first.</p>
+          <p>Drag papers onto the reading list, or have new papers go there straight away. Like every list, it shows the newest papers first, or works as a queue in the order you added them.</p>
           <ul>
             <li><svg class="i"><use href="#i-check"/></svg> Nested collections; drag papers and collections to file them</li>
             <li><svg class="i"><use href="#i-check"/></svg> Tags and notes on every paper</li>
@@ -369,6 +372,12 @@ footer a { color: var(--muted); }
           <h3>Works on an external disk</h3><p>Keep the library on an exFAT or NTFS drive. The data folder must already exist, so Bubo never quietly creates an empty library elsewhere.</p></div>
         <div class="card"><div class="ic"><svg class="i"><use href="#i-search"/></svg></div>
           <h3>Keyboard friendly</h3><p><code>/</code> or Ctrl/Cmd+K to search, arrow keys to move, Enter to open the PDF, N to add a note.</p></div>
+        <div class="card"><div class="ic"><svg class="i"><use href="#i-clip"/></svg></div>
+          <h3>Supplementary information</h3><p>Keep SI files of any type with their paper, stored next to it as <code>… - SI.pdf</code>. Their text is searched too.</p></div>
+        <div class="card"><div class="ic"><svg class="i"><use href="#i-phone"/></svg></div>
+          <h3>An app on your phone</h3><p>Add Bubo to your home screen: it opens full screen, with the owl as its icon.</p></div>
+        <div class="card"><div class="ic"><svg class="i"><use href="#i-github"/></svg></div>
+          <h3>Free software</h3><p>Released under the AGPL-3.0. Read the code, change it and run it however you like.</p></div>
       </div>
     </div>
   </section>
