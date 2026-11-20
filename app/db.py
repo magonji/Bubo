@@ -91,6 +91,21 @@ CREATE TABLE IF NOT EXISTS supplementary (
     added_at      TEXT NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_supplementary_item ON supplementary(item_id);
+
+-- Figures extracted from the PDF (see figures.py); the image files live in <data>/figures.
+CREATE TABLE IF NOT EXISTS figures (
+    id           INTEGER PRIMARY KEY,
+    item_id      INTEGER NOT NULL REFERENCES items(id) ON DELETE CASCADE,
+    pdf_hash     TEXT NOT NULL,             -- the PDF they were extracted from
+    idx          INTEGER NOT NULL,          -- order in the paper
+    page         INTEGER NOT NULL,          -- zero-based
+    kind         TEXT NOT NULL,             -- 'caption' | 'image'
+    label        TEXT,                      -- 'Figure 3'
+    caption      TEXT,
+    width        INTEGER, height INTEGER,   -- of the large image
+    thumb_width  INTEGER, thumb_height INTEGER
+);
+CREATE INDEX IF NOT EXISTS idx_figures_item ON figures(item_id, idx);
 """
 
 FTS_SCHEMA = """CREATE VIRTUAL TABLE IF NOT EXISTS {name} USING fts5(
@@ -99,7 +114,7 @@ FTS_SCHEMA = """CREATE VIRTUAL TABLE IF NOT EXISTS {name} USING fts5(
 )"""
 
 META_FIELDS = [
-    "item_type", "title", "authors", "year", "venue", "volume", "issue",
+    "item_type", "title", "authors", "year", "venue", "venue_short", "volume", "issue",
     "pages", "publisher", "doi", "arxiv_id", "url", "abstract", "notes",
 ]
 ITEM_TYPES = [
@@ -151,9 +166,15 @@ def init_db() -> None:
         conn.execute("DROP TABLE items_fts")
         conn.execute("ALTER TABLE items_fts_new RENAME TO items_fts")
     columns = {r["name"] for r in conn.execute("PRAGMA table_info(items)")}
-    if "to_read_at" not in columns:
-        # When the item was put on the reading list (NULL: not on it).
-        conn.execute("ALTER TABLE items ADD COLUMN to_read_at TEXT")
+    for column, kind in [
+        ("to_read_at", "TEXT"),           # when it was put on the reading list (NULL: not on it)
+        ("venue_short", "TEXT"),          # abbreviated journal name, e.g. "Nat. Commun."
+        ("figures_status", "TEXT"),       # NULL | pending | done | none | error
+        ("figures_hash", "TEXT"),         # hash of the PDF the figures come from
+        ("cover_figure_id", "INTEGER"),   # chosen thumbnail (NULL: the first figure)
+    ]:
+        if column not in columns:
+            conn.execute(f"ALTER TABLE items ADD COLUMN {column} {kind}")
     conn.commit()
     conn.close()
 
@@ -214,7 +235,7 @@ def fts_query(q: str) -> str | None:
 # --------------------------------------------------------------------------- #
 
 def _row_to_item(row: sqlite3.Row, tags: list[str], collections: list[int],
-                 supplementary: list[dict]) -> dict:
+                 supplementary: list[dict], figures: list) -> dict:
     item = dict(row)
     item["annotation_count"] = item.pop("annotation_count", 0) or 0
     item["to_read"] = bool(item.get("to_read_at"))
@@ -228,15 +249,24 @@ def _row_to_item(row: sqlite3.Row, tags: list[str], collections: list[int],
     item["tags"] = sorted(tags, key=str.lower)
     item["collections"] = collections
     item["supplementary"] = supplementary
+    # The thumbnail: the figure chosen as cover, otherwise the first one.
+    item.pop("figures_hash", None)
+    cover = next((f for f in figures if f["id"] == item["cover_figure_id"]), figures[0] if figures else None)
+    item["figure_count"] = len(figures)
+    item["cover"] = cover and {
+        "id": cover["id"], "width": cover["thumb_width"], "height": cover["thumb_height"],
+        "url": f"/api/figures/{cover['id']}/thumb.webp?v={cover['pdf_hash'][:8]}",
+    }
     return item
 
 
-def _relations(conn, ids: list[int]) -> tuple[dict, dict, dict]:
+def _relations(conn, ids: list[int]) -> tuple[dict, dict, dict, dict]:
     tags: dict[int, list[str]] = {i: [] for i in ids}
     cols: dict[int, list[int]] = {i: [] for i in ids}
     supp: dict[int, list[dict]] = {i: [] for i in ids}
+    figs: dict[int, list] = {i: [] for i in ids}
     if not ids:
-        return tags, cols, supp
+        return tags, cols, supp, figs
     marks = ",".join("?" * len(ids))
     for r in conn.execute(
         f"SELECT it.item_id, t.name FROM item_tags it JOIN tags t ON t.id = it.tag_id "
@@ -254,7 +284,11 @@ def _relations(conn, ids: list[int]) -> tuple[dict, dict, dict]:
             "added_at": r["added_at"],
             "file_path": r["file_name"] if storage.is_in_place(r["file_name"]) else None,
         })
-    return tags, cols, supp
+    for r in conn.execute(
+        f"SELECT id, item_id, pdf_hash, thumb_width, thumb_height FROM figures "
+        f"WHERE item_id IN ({marks}) ORDER BY idx", ids):
+        figs[r["item_id"]].append(r)
+    return tags, cols, supp, figs
 
 
 _ANN_COUNT = "(SELECT COUNT(*) FROM annotations a WHERE a.item_id = i.id) AS annotation_count"
@@ -265,8 +299,8 @@ def get_item(conn, item_id: int) -> dict | None:
                        (item_id,)).fetchone()
     if row is None:
         return None
-    tags, cols, supp = _relations(conn, [item_id])
-    return _row_to_item(row, tags[item_id], cols[item_id], supp[item_id])
+    tags, cols, supp, figs = _relations(conn, [item_id])
+    return _row_to_item(row, tags[item_id], cols[item_id], supp[item_id], figs[item_id])
 
 
 def get_item_file(conn, item_id: int) -> tuple[str | None, str | None]:
@@ -311,8 +345,9 @@ def list_items(conn, q: str | None = None, collection_id: int | None = None,
         sql += " WHERE " + " AND ".join(where)
     sql += " ORDER BY " + SORTS.get(sort, SORTS["year"])
     rows = conn.execute(sql, params).fetchall()
-    tags, cols, supp = _relations(conn, [r["id"] for r in rows])
-    items = [_row_to_item(r, tags[r["id"]], cols[r["id"]], supp[r["id"]]) for r in rows]
+    tags, cols, supp, figs = _relations(conn, [r["id"] for r in rows])
+    items = [_row_to_item(r, tags[r["id"]], cols[r["id"]], supp[r["id"]], figs[r["id"]])
+             for r in rows]
     fq = fts_query(q) if q else None
     if fq and items:
         matches = search_snippets(conn, fq)

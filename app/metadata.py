@@ -136,6 +136,7 @@ def _crossref_to_meta(m: dict) -> dict:
         "authors": authors,
         "year": year,
         "venue": (m.get("container-title") or [None])[0],
+        "venue_short": (m.get("short-container-title") or [None])[0],
         "volume": m.get("volume"),
         "issue": m.get("issue"),
         "pages": (m.get("page") or "").replace("-", "–") or None,
@@ -359,7 +360,7 @@ def _meta_from_html(meta: dict[str, list[str]], page_title: str, url: str) -> di
 
 # Fields offered when refreshing metadata, in display order. The arXiv ID is never
 # replaced: it identifies the version the user added.
-REFRESH_FIELDS = ["item_type", "title", "authors", "year", "venue", "volume", "issue",
+REFRESH_FIELDS = ["item_type", "title", "authors", "year", "venue", "venue_short", "volume", "issue",
                   "pages", "publisher", "doi", "url", "abstract"]
 
 

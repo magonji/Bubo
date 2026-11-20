@@ -696,3 +696,90 @@ def test_search_index_gains_supplementary_column():
     conn.execute("DELETE FROM items_fts WHERE rowid = 999")
     conn.commit()
     conn.close()
+
+
+# --------------------------------------------------------------------------- #
+# Figures
+# --------------------------------------------------------------------------- #
+
+def test_figures_found_in_raster_and_vector_papers():
+    from app import figures
+    from tests.sample_pdfs import raster_paper, vector_paper
+    with pymupdf.open(stream=raster_paper(), filetype="pdf") as doc:
+        found = figures.find_figures(doc)
+        # The captioned plot and the graphical abstract; not the logo repeated on every
+        # page, nor the small icon.
+        assert [(f.page, f.kind, f.label) for f in found] == [(0, "caption", "Figure 1"), (1, "image", "")]
+        assert found[0].caption.startswith("Figure 1. Flight noise")
+        assert found[0].rect.contains(pymupdf.Rect(110, 250, 485, 500))
+        assert found[0].rect.y1 < 512          # stops above the caption
+    with pymupdf.open(stream=vector_paper(), filetype="pdf") as doc:
+        (fig,) = figures.find_figures(doc)
+        assert (fig.kind, fig.label) == ("caption", "Figure 2")
+        # The axes, the curve and the labels outside the axes, including the rotated one…
+        assert fig.rect.contains(pymupdf.Rect(85, 290, 280, 478)) and fig.rect.x0 < 56
+        # …but not the body text above, the other column or the header rule.
+        assert fig.rect.y0 > 250 and fig.rect.x1 < 300
+
+
+def test_figures_api(client):
+    from app import figures
+    from tests.sample_pdfs import raster_paper, vector_paper
+    login(client)
+    r = client.post("/api/items/upload", files=[("files", ("owls.pdf", raster_paper(), "application/pdf"))])
+    item_id = r.json()["results"][0]["id"]
+    figures.wait()
+    data = client.get(f"/api/items/{item_id}/figures").json()
+    assert data["status"] == "done" and len(data["figures"]) == 2
+    first, second = data["figures"]
+    assert first["label"] == "Figure 1" and first["caption"].startswith("Figure 1.") and first["page"] == 1
+
+    thumb = client.get(first["thumb"])
+    assert thumb.status_code == 200 and thumb.headers["content-type"] == "image/webp"
+    from PIL import Image
+    import io
+    assert Image.open(io.BytesIO(thumb.content)).width <= 400
+    assert Image.open(io.BytesIO(client.get(first["full"]).content)).width <= 1200
+
+    item = client.get(f"/api/items/{item_id}").json()
+    assert item["figure_count"] == 2 and item["cover"]["id"] == first["id"]
+    item = client.put(f"/api/items/{item_id}/cover", json={"figure_id": second["id"]}).json()
+    assert item["cover"]["id"] == second["id"]
+    assert client.put(f"/api/items/{item_id}/cover", json={"figure_id": 99999}).status_code == 404
+
+    # A new PDF brings new figures, and the cover goes back to the first one.
+    client.post(f"/api/items/{item_id}/file", files={"file": ("v.pdf", vector_paper(), "application/pdf")})
+    figures.wait()
+    item = client.get(f"/api/items/{item_id}").json()
+    assert item["figure_count"] == 1 and item["cover"]["id"] != second["id"]
+    assert client.get(first["thumb"]).status_code == 404
+    assert len(list(figures.item_dir(item_id).iterdir())) == 1      # the old set is gone
+
+    # A paper without figures, and deleting a paper.
+    plain = client.post("/api/items/upload", files=[("files", ("p.pdf", make_pdf("Just text"), "application/pdf"))])
+    plain_id = plain.json()["results"][0]["id"]
+    figures.wait()
+    p = client.get(f"/api/items/{plain_id}").json()
+    assert p["figures_status"] == "none" and p["cover"] is None
+    client.delete(f"/api/items/{item_id}")
+    client.delete(f"/api/items/{plain_id}")
+    assert not figures.item_dir(item_id).exists()
+
+
+def test_cli_fills_in_missing_figures(client, capsys):
+    from app import cli, db, figures
+    from tests.sample_pdfs import raster_paper
+    login(client)
+    r = client.post("/api/items/upload", files=[("files", ("o.pdf", raster_paper(), "application/pdf"))])
+    item_id = r.json()["results"][0]["id"]
+    figures.wait()
+    conn = db.connect()            # as if the paper predated figure extraction
+    conn.execute("DELETE FROM figures WHERE item_id = ?", (item_id,))
+    conn.execute("UPDATE items SET figures_status = NULL, figures_hash = NULL WHERE id = ?", (item_id,))
+    conn.commit()
+    conn.close()
+    assert client.get(f"/api/items/{item_id}").json()["figure_count"] == 0
+    cli.main(["figures"])
+    assert client.get(f"/api/items/{item_id}").json()["figure_count"] == 2
+    assert "2 figures" in capsys.readouterr().out
+    client.delete(f"/api/items/{item_id}")

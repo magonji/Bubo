@@ -1053,6 +1053,7 @@ async function loadDetailAnnotations(item) {
 // --------------------------------------------------------------------------
 const FIELD_LABELS = {
   item_type: "Item type", title: "Title", authors: "Authors", year: "Year", venue: "Publication",
+  venue_short: "Journal abbreviation",
   volume: "Volume", issue: "Issue", pages: "Pages", publisher: "Publisher", doi: "DOI", url: "URL",
   abstract: "Abstract",
 };

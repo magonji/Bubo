@@ -15,7 +15,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 from starlette.middleware.sessions import SessionMiddleware
 
-from . import annotate, bibtex, citation, db, metadata, pdf, storage, textsearch
+from . import annotate, bibtex, citation, db, figures, metadata, pdf, storage, textsearch
 from .config import settings
 
 STATIC = Path(__file__).parent / "static"
@@ -72,6 +72,7 @@ class ItemIn(BaseModel):
     authors: list[Author] | None = None
     year: int | None = None
     venue: str | None = None
+    venue_short: str | None = None
     volume: str | None = None
     issue: str | None = None
     pages: str | None = None
@@ -159,6 +160,12 @@ class AnnotationPatch(BaseModel):
 
 def _store_pdf(data: bytes) -> dict:
     return storage.save_new(data, pdf.sha256(data))
+
+
+def _pdf_added(conn, item_id: int) -> None:
+    """A paper has a new PDF: give it its name, then extract its figures in the background."""
+    storage.sync_item(conn, item_id)
+    figures.schedule(conn, item_id)
 
 
 def _pdf_path_or_404(conn, item_id: int):
@@ -274,6 +281,7 @@ def delete_item(item_id: int, conn: Conn):
     _item_or_404(conn, item_id)
     for name in db.delete_item(conn, item_id):
         storage.delete(name)
+    figures.remove_files(item_id)
     return {"ok": True}
 
 
@@ -313,14 +321,14 @@ def _upload(conn, files: list[UploadFile], collection_id: int | None) -> list[di
             existing = db.get_item(conn, dup)
             if not existing["has_file"]:
                 db.set_file(conn, dup, _store_pdf(data), info.fulltext)
-                storage.sync_item(conn, dup)
+                _pdf_added(conn, dup)
                 results.append({"filename": name, "status": "attached", "id": dup})
             else:
                 results.append({"filename": name, "status": "duplicate", "id": dup})
             continue
         item_id = db.create_item(conn, meta, file=_store_pdf(data), fulltext=info.fulltext,
                                  collection_ids=_collection_ids(conn, collection_id))
-        storage.sync_item(conn, item_id)
+        _pdf_added(conn, item_id)
         results.append({"filename": name, "status": "created", "id": item_id,
                         "identified": identified})
     return results
@@ -354,7 +362,7 @@ def _import(body: ImportIn, conn) -> dict:
         file, fulltext = _store_pdf(pdf_bytes), pdf.analyze(pdf_bytes).fulltext
     item_id = db.create_item(conn, meta, file=file, fulltext=fulltext,
                              collection_ids=_collection_ids(conn, body.collection_id))
-    storage.sync_item(conn, item_id)
+    _pdf_added(conn, item_id) if file else storage.sync_item(conn, item_id)
     return {"status": "created", "item": db.get_item(conn, item_id)}
 
 
@@ -367,7 +375,7 @@ def attach_file(item_id: int, conn: Conn, file: UploadFile = File(...)):
     old, _ = db.get_item_file(conn, item_id)
     db.set_file(conn, item_id, _store_pdf(data), pdf.analyze(data).fulltext)
     storage.delete(old)
-    storage.sync_item(conn, item_id)
+    _pdf_added(conn, item_id)
     return db.get_item(conn, item["id"])
 
 
@@ -386,6 +394,55 @@ def get_annotated_file(item_id: int, conn: Conn):
     filename = f"{path.stem} (annotated).pdf"
     return Response(data, media_type="application/pdf",
                     headers={"Content-Disposition": _content_disposition("attachment", filename)})
+
+
+# --------------------------------------------------------------------------- #
+# Figures
+# --------------------------------------------------------------------------- #
+
+class CoverIn(BaseModel):
+    figure_id: int | None = None      # None: back to the first figure
+
+
+@app.get("/api/items/{item_id}/figures", dependencies=[Auth])
+def list_figures(item_id: int, conn: Conn):
+    item = _item_or_404(conn, item_id)
+    return {"status": item["figures_status"], "cover_id": item["cover"] and item["cover"]["id"],
+            "figures": figures.list_figures(conn, item_id)}
+
+
+@app.get("/api/figures/{figure_id}/{size}.webp", dependencies=[Auth])
+def get_figure(figure_id: int, size: Literal["thumb", "full"], conn: Conn, v: str = ""):
+    r = conn.execute("SELECT item_id, pdf_hash, idx FROM figures WHERE id = ?", (figure_id,)).fetchone()
+    if r and v and not r["pdf_hash"].startswith(v):
+        r = None       # a figure of an earlier PDF (figure ids can be reused)
+    path = r and figures.file_path(r["item_id"], r["pdf_hash"], r["idx"], size)
+    if not path or not path.exists():
+        raise HTTPException(404, "Figure not found")
+    # The URL carries the PDF's hash, so the image never changes behind it.
+    return FileResponse(path, media_type="image/webp",
+                        headers={"Cache-Control": "private, max-age=31536000, immutable"})
+
+
+@app.put("/api/items/{item_id}/cover", dependencies=[Auth])
+def set_cover(item_id: int, body: CoverIn, conn: Conn):
+    _item_or_404(conn, item_id)
+    if body.figure_id is not None and not conn.execute(
+            "SELECT 1 FROM figures WHERE id = ? AND item_id = ?", (body.figure_id, item_id)).fetchone():
+        raise HTTPException(404, "That figure is not one of this paper's")
+    conn.execute("UPDATE items SET cover_figure_id = ? WHERE id = ?", (body.figure_id, item_id))
+    conn.commit()
+    return db.get_item(conn, item_id)
+
+
+@app.post("/api/items/{item_id}/figures/extract", dependencies=[Auth])
+def extract_figures(item_id: int, conn: Conn):
+    """Extract the figures again (in the background)."""
+    item = _item_or_404(conn, item_id)
+    if not item["has_file"]:
+        raise HTTPException(422, "This item has no PDF")
+    figures.schedule(conn, item_id, force=True)
+    return db.get_item(conn, item_id)
 
 
 # --------------------------------------------------------------------------- #
@@ -471,7 +528,7 @@ def find_pdf(item_id: int, conn: Conn):
             " Adding a contact email in Settings enables Unpaywall, which finds many more.")
         raise HTTPException(404, "No open-access PDF found." + hint)
     db.set_file(conn, item_id, _store_pdf(data), pdf.analyze(data).fulltext)
-    storage.sync_item(conn, item_id)
+    _pdf_added(conn, item_id)
     return db.get_item(conn, item_id)
 
 
