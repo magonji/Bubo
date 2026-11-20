@@ -739,6 +739,13 @@ function clickItem(e, item) {
   select(item);
   return false;
 }
+$(".table-wrap").addEventListener("click", (e) => {
+  if (narrow.matches || e.target.closest("tr, a[data-id], thead, button, input, select") || !state.selectedIds.size) return;
+  if (e.shiftKey || e.metaKey || e.ctrlKey) return;
+  state.selectedIds = new Set();
+  state.selected = null;
+  renderSelection();
+});
 $("#items").addEventListener("dblclick", (e) => {
   const tr = e.target.closest("tr");
   const item = tr && state.items.find((i) => i.id === Number(tr.dataset.id));
@@ -1023,20 +1030,43 @@ async function renderOverview() {
   let ov;
   try { ov = await api("/api/overview"); } catch { return; }
   if (token !== overviewToken || state.selectedIds.size) return;
-  const row = (i) => `<button type="button" class="ov-item" data-id="${i.id}">${esc(i.title) || "(untitled)"}
-    <span class="ov-meta">${esc([authorsShort(i.authors), i.year].filter(Boolean).join(" · ") || "No details yet")}</span></button>`;
-  const section = (title, items, total, empty) => `<div class="ov-section"><h3><span>${title}</span>${
-    total > items.length ? `<span>${items.length} of ${total}</span>` : ""}</h3>${
-    items.length ? items.map(row).join("") : `<div class="ov-empty">${empty}</div>`}</div>`;
-  $("#detail").innerHTML = `<div class="overview">
-    <h2>Library overview</h2>
-    ${section("Recently added", ov.recent, ov.recent.length, "Nothing yet: press Add to bring in your first paper.")}
-    ${section("On your reading list", ov.to_read, ov.to_read_total, "Your reading list is empty.")}
-    ${section("Incomplete metadata", ov.incomplete, ov.incomplete_total, "Every paper has its basic details. Well done.")}
+  // In the style of the paper sheet (paper.js): cards with figures, a details-like list.
+  const card = (i) => `<a class="card" href="/paper/${i.id}" data-id="${i.id}">
+      <div class="thumb">${thumbHTML(i)}</div>
+      <div class="c-title">${esc(i.title) || "(untitled)"}</div>
+      <div class="c-meta">${esc([authorsShort(i.authors), i.year].filter(Boolean).join(" · ") || "No details yet")}</div></a>`;
+  const strip = (items, empty) => items.length
+    ? `<div class="pv-strip">${items.map(card).join("")}</div>` : `<p class="ov-empty">${empty}</p>`;
+  const more = (shown, total, view) => total > shown
+    ? `<button type="button" class="pv-link ov-all" data-view="${view}">All ${total}</button>` : "";
+  const c = ov.counts;
+  const stat = (n, label, view) => `<button type="button" class="ov-stat"${view ? ` data-view="${view}"` : " disabled"}>
+      <span class="ov-n">${n}</span><span class="ov-label">${label}</span></button>`;
+  $("#detail").innerHTML = `<div class="pv pv-pane overview">
+    <div class="pv-bar"><span class="pv-bar-title">Library</span></div>
+    <h1 class="pv-title">Library overview</h1>
+    <div class="ov-stats">
+      ${stat(c.papers, c.papers === 1 ? "paper" : "papers", "all")}
+      ${stat(c.with_pdf, "with a PDF")}
+      ${stat(c.to_read, "to read", "toread")}
+    </div>
+    <section class="pv-section"><h2>Recently added</h2>
+      ${strip(ov.recent, "Nothing yet: press Add to bring in your first paper.")}</section>
+    <section class="pv-section"><h2><span>On your reading list</span>${more(ov.to_read.length, ov.to_read_total, "toread")}</h2>
+      ${strip(ov.to_read, "Your reading list is empty. Add papers with the bookmark on their sheet, or drag them onto Reading list.")}</section>
+    <section class="pv-section"><h2><span>Incomplete metadata</span>${ov.incomplete_total ? `<span class="ov-count">${ov.incomplete_total}</span>` : ""}</h2>
+      ${ov.incomplete.length ? `<div class="pv-details ov-list">${ov.incomplete.map((i) => `
+        <button type="button" class="ov-row" data-id="${i.id}">
+          <span class="thumb thumb-sm">${thumbHTML(i)}</span>
+          <span class="ov-row-text"><span class="ov-row-title">${esc(i.title) || "(untitled)"}</span>
+            <span class="ov-missing">Missing: ${esc(i.missing.join(", "))}</span></span>
+        </button>`).join("")}</div>` : `<p class="ov-empty">Every paper has its basic details. Well done.</p>`}</section>
   </div>`;
   $("#detail .overview").addEventListener("click", (e) => {
-    const b = e.target.closest(".ov-item");
-    if (b) showItem(Number(b.dataset.id));
+    const target = e.target.closest("[data-id]");
+    if (target) { e.preventDefault(); return showItem(Number(target.dataset.id)); }
+    const view = e.target.closest("[data-view]")?.dataset.view;
+    if (view) setView({ type: view });
   });
 }
 

@@ -581,6 +581,8 @@ def test_find_pdf_and_overview(client, monkeypatch):
     assert [i["title"] for i in ov["recent"]] == ["New item", "Complete"]
     assert [i["title"] for i in ov["to_read"]] == ["Complete"] and ov["to_read_total"] == 1
     assert [i["title"] for i in ov["incomplete"]] == ["New item"] and ov["incomplete_total"] == 1
+    assert ov["incomplete"][0]["missing"] == ["title", "authors", "year", "journal"]
+    assert ov["counts"] == {"papers": 2, "with_pdf": 0, "to_read": 1, "collections": 0}
 
     assert client.post(f"/api/items/{bare['id']}/find-pdf").status_code == 422
     monkeypatch.setattr(metadata, "find_pdf", lambda item: None)

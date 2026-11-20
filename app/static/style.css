@@ -242,6 +242,28 @@ mark { background: var(--mark); color: inherit; border-radius: 2px; padding: 0 1
 
 /* Overview (item pane with nothing selected) and multiple selection */
 .overview h2 { font-size: 15px; margin: 0 0 14px; }
+/* The library overview, in the style of the paper sheet */
+.overview.pv .pv-title { margin-top: 0; }
+.overview .pv-section h2 { display: flex; align-items: center; gap: 8px; }
+.overview .pv-section h2 .ov-all { margin-left: auto; min-height: 0; font-size: 13px; }
+.ov-count { margin-left: auto; font-size: 12px; font-weight: 600; color: var(--muted); }
+.ov-stats { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; margin-top: 14px; }
+.ov-stat { display: flex; flex-direction: column; align-items: flex-start; gap: 2px; padding: 10px 12px; border-radius: 10px;
+  border: 1px solid var(--border); background: var(--panel); text-align: left; cursor: pointer; }
+.ov-stat:not(:disabled):hover { border-color: var(--accent); background: var(--panel); }
+.ov-stat:disabled { cursor: default; opacity: 1; }
+.ov-n { font-family: "Fraunces", Georgia, serif; font-weight: 600; font-size: 24px; line-height: 1.1; color: var(--text); }
+.ov-label { font-size: 12px; color: var(--muted); }
+.overview .ov-empty { margin: 0; padding: 0; color: var(--muted); font-size: 13.5px; line-height: 1.5; }
+.ov-list { display: flex; flex-direction: column; }
+.ov-row { display: flex; align-items: center; gap: 12px; width: 100%; padding: 8px 12px; border: none; border-top: 1px solid var(--sep);
+  border-radius: 0; background: transparent; text-align: left; white-space: normal; }
+.ov-row:first-child { border-top: none; }
+.ov-row:hover { background: var(--hover); }
+.ov-row .thumb-sm { width: 44px; height: 44px; border-radius: 8px; }
+.ov-row-text { display: flex; flex-direction: column; min-width: 0; }
+.ov-row-title { font-size: 13.5px; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ov-missing { font-size: 12px; color: var(--muted); }
 .ov-section { margin-bottom: 18px; }
 .ov-section h3 {
   font-size: 11px; text-transform: uppercase; letter-spacing: .05em; color: var(--muted);

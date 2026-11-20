@@ -777,8 +777,19 @@ def library_counts(conn) -> dict:
     return {"all": row["all_items"], "unfiled": row["unfiled"] or 0, "to_read": row["to_read"] or 0}
 
 
+def missing_details(item: dict) -> list[str]:
+    """Details a reference needs that the item lacks (shown in the overview so they get fixed)."""
+    missing = []
+    if not item.get("title") or item["title"] == "New item":
+        missing.append("title")
+    if not item.get("authors"):
+        missing.append("authors")
+    if not item.get("year"):
+        missing.append("year")
+    if item.get("item_type") in ("article", "inproceedings", "incollection") and not item.get("venue"):
+        missing.append("journal" if item.get("item_type") == "article" else "venue")
+    return missing
+
+
 def is_incomplete(item: dict) -> bool:
-    """Items missing details a reference needs (shown in the overview so they get fixed)."""
-    if not item.get("title") or item["title"] == "New item" or not item.get("authors") or not item.get("year"):
-        return True
-    return item.get("item_type") in ("article", "inproceedings", "incollection") and not item.get("venue")
+    return bool(missing_details(item))

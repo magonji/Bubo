@@ -542,10 +542,16 @@ def find_pdf(item_id: int, conn: Conn):
 def overview(conn: Conn):
     """Shown in the item pane when nothing is selected."""
     items = db.list_items(conn, sort="added")
-    incomplete = [i for i in items if db.is_incomplete(i)]
+    incomplete = [{**i, "missing": db.missing_details(i)} for i in items if db.is_incomplete(i)]
     to_read = db.list_items(conn, to_read=True, sort="year")
-    return {"recent": items[:5], "to_read": to_read[:5], "to_read_total": len(to_read),
-            "incomplete": incomplete[:5], "incomplete_total": len(incomplete)}
+    counts = {
+        "papers": len(items),
+        "with_pdf": sum(1 for i in items if i["has_file"]),
+        "to_read": len(to_read),
+        "collections": conn.execute("SELECT COUNT(*) FROM collections").fetchone()[0],
+    }
+    return {"counts": counts, "recent": items[:10], "to_read": to_read[:10], "to_read_total": len(to_read),
+            "incomplete": incomplete[:6], "incomplete_total": len(incomplete)}
 
 
 @app.get("/api/items/{item_id}/text-matches", dependencies=[Auth])
