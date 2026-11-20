@@ -125,6 +125,8 @@
     </section>
   </main>
   <div id="side-backdrop" class="side-backdrop" hidden></div>
+  <!-- Phones: the paper screen, /paper/<id> (paper.js). -->
+  <section id="paper" class="paper-view hidden" aria-label="Paper"></section>
 </div>
 
 <div id="viewer" class="viewer hidden">
@@ -158,10 +160,13 @@
 <dialog id="upload-dialog" class="dialog dialog-narrow" aria-labelledby="upload-title"></dialog>
 <dialog id="settings-dialog" class="dialog dialog-narrow" aria-labelledby="settings-title"></dialog>
 <dialog id="refresh-dialog" class="dialog" aria-labelledby="refresh-title"></dialog>
+<dialog id="pv-dialog" class="dialog dialog-narrow" aria-labelledby="pv-dialog-title"></dialog>
+<dialog id="lightbox" class="lightbox" aria-labelledby="lightbox-title"></dialog>
 <input type="file" id="attach-input" accept="application/pdf,.pdf" hidden>
 <input type="file" id="supp-input" multiple hidden>
 
 <script src="/static/app.js"></script>
+<script src="/static/paper.js"></script>
 <script type="module" src="/static/viewer.js"></script>
 </body>
 </html>

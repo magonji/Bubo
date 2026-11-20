@@ -162,6 +162,7 @@ async function refresh() {
   state.selectedIds = new Set([...state.selectedIds].filter((id) => present.has(id)));
   if (!present.has(state.selected)) state.selected = [...state.selectedIds].at(-1) ?? null;
   renderSelection();
+  if (typeof refreshPaper === "function") refreshPaper();   // paper.js
 }
 
 // The item pane: one item, several (bulk actions) or none (library overview).
@@ -408,7 +409,9 @@ $("#side-backdrop").addEventListener("click", closeDrawer);
 
 function showDetailPane() {
   if (!narrow.matches || document.body.classList.contains("show-detail")) return;
-  $("#detail-back-label").textContent = $("#view-title").textContent || "Library";
+  // Opened with "Edit details" from the paper screen, it goes back there.
+  $("#detail-back-label").textContent = document.body.classList.contains("show-paper")
+    ? "Paper" : $("#view-title").textContent || "Library";
   document.body.classList.add("show-detail");
   $("#detail").scrollTop = 0;
   history.pushState({ bubo: "detail" }, "");
@@ -621,10 +624,7 @@ $("#cards").addEventListener("click", (e) => {
   const a = e.target.closest("a[data-id]");
   if (!a || e.metaKey || e.ctrlKey || e.shiftKey) return;
   e.preventDefault();
-  const item = state.items.find((i) => i.id === Number(a.dataset.id));
-  if (!item) return;
-  select(item);
-  showDetailPane();
+  openPaper(Number(a.dataset.id));   // paper.js
 });
 $$(".view-switch [data-mode]").forEach((b) => b.addEventListener("click", () => {
   state.mobileView = b.dataset.mode;
@@ -1833,6 +1833,7 @@ async function start() {
   $("#app").classList.remove("hidden");
   try { state.settings = { ...state.settings, ...(await api("/api/settings")) }; } catch {}
   await refresh();
+  routeFromLocation();   // a /paper/<id> address (paper.js)
 }
 
 api("/api/me").then(start).catch(() => {});

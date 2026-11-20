@@ -201,6 +201,12 @@ def index():
     return FileResponse(STATIC / "index.html")
 
 
+@app.get("/paper/{item_id}", include_in_schema=False)
+def paper_page(item_id: int):
+    """A paper's own address: the same page, which then opens the paper (paper.js)."""
+    return FileResponse(STATIC / "index.html")
+
+
 # iOS asks for these at the root when a page is added to the home screen.
 @app.get("/apple-touch-icon.png", include_in_schema=False)
 @app.get("/apple-touch-icon-precomposed.png", include_in_schema=False)

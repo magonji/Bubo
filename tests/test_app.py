@@ -783,3 +783,9 @@ def test_cli_fills_in_missing_figures(client, capsys):
     assert client.get(f"/api/items/{item_id}").json()["figure_count"] == 2
     assert "2 figures" in capsys.readouterr().out
     client.delete(f"/api/items/{item_id}")
+
+
+def test_paper_address_serves_the_app(client):
+    r = client.get("/paper/123")
+    assert r.status_code == 200 and "<title>Bubo</title>" in r.text and "/static/paper.js" in r.text
+    assert client.get("/paper/not-a-number").status_code == 422
