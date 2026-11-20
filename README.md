@@ -1,7 +1,7 @@
 # <img src="app/static/owl.svg" alt="" width="40" align="top"> Bubo
 
-A self-hosted reference manager in the spirit of Zotero: your papers and PDFs live on your own
-server, and you manage them from the browser.
+A self-hosted reference manager: your papers and PDFs live on your own server, and you manage
+them from the browser.
 
 ## Features
 
@@ -62,7 +62,7 @@ mkdir -p /path/to/your/data       # the data folder must exist (see below)
 docker compose up -d --build
 ```
 
-Open `http://localhost:8000`.
+Open `http://localhost:2826`.
 
 ### Where your data lives
 
@@ -132,7 +132,7 @@ behind an HTTPS reverse proxy and add `BUBO_SECURE_COOKIES=true` to `.env`. With
 
 ```
 papers.yourdomain.com {
-    reverse_proxy 127.0.0.1:8000
+    reverse_proxy 127.0.0.1:2826
 }
 ```
 
@@ -144,7 +144,7 @@ If you use nginx, raise `client_max_body_size` (e.g. `200m`) so that large PDFs 
 |---|---|
 | `BUBO_PASSWORD` | Sign-in password (required). |
 | `BUBO_DATA_DIR` | Data folder on the host (default `./data`). Must exist. |
-| `BUBO_PORT` | Port on `127.0.0.1` for the web interface (default 8000). |
+| `BUBO_PORT` | Port on `127.0.0.1` for the web interface (default 2826). |
 | `PUID` / `PGID` | User and group Bubo runs as (default: owner of the data folder). |
 | `BUBO_CONTACT_EMAIL` | Optional. Enables open-access PDF lookup via Unpaywall and is sent to Crossref and PubMed to use their polite pools. It can also be set in Settings, which takes precedence. |
 | `BUBO_SECURE_COOKIES` | `true` when served over HTTPS. |

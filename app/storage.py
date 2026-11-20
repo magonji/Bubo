@@ -72,7 +72,7 @@ def clean_component(name: str, max_len: int, fallback: str) -> str:
 
 
 def base_name(title: str, authors: list[dict], year: int | None) -> str:
-    """'Vaswani et al. - 2017 - Attention Is All You Need' (Zotero-style)."""
+    """'Vaswani et al. - 2017 - Attention Is All You Need'."""
     def family(a):
         return (a.get("family") or a.get("given") or "").strip()
     names = [family(a) for a in authors if family(a)]
