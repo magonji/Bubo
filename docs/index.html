@@ -1,0 +1,375 @@
+<!doctype html>
+<html lang="en-GB">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Bubo · a self-hosted reference manager</title>
+<meta name="description" content="Bubo is a self-hosted reference manager in the spirit of Zotero. Your papers and PDFs live on your own server, and you manage them from the browser.">
+<meta property="og:title" content="Bubo · a self-hosted reference manager">
+<meta property="og:description" content="Your papers and PDFs on your own server: full-text search, highlights and notes, collections, citations and BibTeX.">
+<meta property="og:image" content="assets/screenshots/library-light.png">
+<link rel="icon" type="image/svg+xml" href="assets/owl.svg">
+<style>
+@font-face {
+  font-family: "Fraunces";
+  font-style: normal;
+  font-weight: 100 900;
+  font-display: swap;
+  src: url("assets/fonts/fraunces-latin-full.woff2") format("woff2");
+}
+:root {
+  --bg: #f6f6f4;
+  --panel: #ffffff;
+  --side: #efeeea;
+  --text: #1f2328;
+  --muted: #5d6168;
+  --border: #d4d1c9;
+  --accent: #E8A33D;
+  --accent-hover: #F0B65A;
+  --accent-subtle: rgba(232, 163, 61, 0.14);
+  --on-accent: #1A1205;
+  --accent-strong: #8A5200;
+  --code-bg: #1f2328;
+  --code-text: #e9e7e1;
+  --shadow: 0 1px 2px rgba(31, 35, 40, .06), 0 12px 40px rgba(31, 35, 40, .12);
+  --radius: 10px;
+  --sans: -apple-system, BlinkMacSystemFont, "Segoe UI", Inter, Roboto, "Helvetica Neue", Arial, sans-serif;
+  --mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  color-scheme: light;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #16181c; --panel: #1f2227; --side: #1b1d21; --text: #e6e6e3; --muted: #a3a6ab;
+    --border: #34373d; --accent-strong: #E8A33D; --accent-subtle: rgba(232, 163, 61, 0.16);
+    --code-bg: #0f1114; --shadow: 0 1px 2px rgba(0,0,0,.3), 0 12px 40px rgba(0,0,0,.45);
+    color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #16181c; --panel: #1f2227; --side: #1b1d21; --text: #e6e6e3; --muted: #a3a6ab;
+  --border: #34373d; --accent-strong: #E8A33D; --accent-subtle: rgba(232, 163, 61, 0.16);
+  --code-bg: #0f1114; --shadow: 0 1px 2px rgba(0,0,0,.3), 0 12px 40px rgba(0,0,0,.45);
+  color-scheme: dark;
+}
+
+* { box-sizing: border-box; }
+html { scroll-behavior: smooth; }
+body {
+  margin: 0; background: var(--bg); color: var(--text);
+  font: 17px/1.6 var(--sans); -webkit-font-smoothing: antialiased;
+}
+a { color: var(--accent-strong); }
+a:focus-visible, button:focus-visible { outline: 2px solid var(--accent-strong); outline-offset: 2px; border-radius: 4px; }
+img { max-width: 100%; height: auto; display: block; }
+.wrap { max-width: 1120px; margin: 0 auto; padding: 0 24px; }
+.serif { font-family: "Fraunces", Georgia, serif; font-variation-settings: "SOFT" 100, "WONK" 1; }
+svg.i { width: 20px; height: 20px; flex: none; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
+
+/* Navigation */
+.nav { position: sticky; top: 0; z-index: 10; background: color-mix(in srgb, var(--bg) 88%, transparent);
+  backdrop-filter: saturate(1.4) blur(10px); border-bottom: 1px solid transparent; }
+.nav.scrolled { border-bottom-color: var(--border); }
+.nav .wrap { display: flex; align-items: center; gap: 28px; height: 64px; }
+.brand { display: flex; align-items: center; gap: 8px; text-decoration: none; color: var(--accent); }
+.brand img { width: 30px; height: 30px; }
+.brand span { font-family: "Fraunces", Georgia, serif; font-weight: 600; font-size: 26px;
+  font-variation-settings: "SOFT" 100, "WONK" 1; letter-spacing: -.01em; }
+.nav-links { display: flex; gap: 24px; margin-left: auto; align-items: center; }
+.nav-links a { color: var(--text); text-decoration: none; font-size: 15px; }
+.nav-links a:hover { color: var(--accent-strong); }
+
+.btn { display: inline-flex; align-items: center; gap: 8px; padding: 11px 20px; border-radius: 8px;
+  font: 600 16px/1 var(--sans); text-decoration: none; border: 1px solid var(--border); color: var(--text);
+  background: var(--panel); transition: background .15s, border-color .15s; }
+.btn:hover { border-color: var(--accent); }
+.btn.primary { background: var(--accent); border-color: var(--accent); color: var(--on-accent); }
+.btn.primary:hover { background: var(--accent-hover); border-color: var(--accent-hover); }
+.btn.small { padding: 8px 14px; font-size: 14px; }
+
+/* Hero */
+.hero { padding: 72px 0 24px; text-align: center; }
+.hero h1 { font-family: "Fraunces", Georgia, serif; font-weight: 600; font-variation-settings: "SOFT" 100, "WONK" 1;
+  font-size: clamp(40px, 6.4vw, 68px); line-height: 1.05; letter-spacing: -.02em; margin: 0 auto 20px; max-width: 14ch; }
+.hero h1 em { font-style: normal; color: var(--accent); }
+.hero p.lead { font-size: clamp(18px, 2.2vw, 21px); color: var(--muted); max-width: 40em; margin: 0 auto 32px; }
+.cta { display: flex; gap: 12px; justify-content: center; flex-wrap: wrap; }
+.facts { display: flex; gap: 10px 28px; justify-content: center; flex-wrap: wrap; margin: 28px 0 0;
+  padding: 0; list-style: none; color: var(--muted); font-size: 15px; }
+.facts li { display: flex; align-items: center; gap: 6px; }
+.facts svg.i { width: 17px; height: 17px; color: var(--accent-strong); }
+
+.shot { border-radius: var(--radius); overflow: hidden; border: 1px solid var(--border);
+  box-shadow: var(--shadow); background: var(--panel); }
+.shot .bar { height: 30px; display: flex; align-items: center; gap: 7px; padding: 0 12px;
+  background: var(--side); border-bottom: 1px solid var(--border); }
+.shot .bar i { width: 10px; height: 10px; border-radius: 50%; background: var(--border); }
+.hero .shot { margin: 56px auto 0; max-width: 1080px; }
+
+/* Feature rows */
+section { padding: 88px 0; }
+.eyebrow { font: 600 13px/1 var(--sans); letter-spacing: .08em; text-transform: uppercase; color: var(--accent-strong); margin: 0 0 12px; }
+h2 { font-family: "Fraunces", Georgia, serif; font-weight: 600; font-variation-settings: "SOFT" 100, "WONK" 1;
+  font-size: clamp(30px, 4vw, 40px); line-height: 1.15; letter-spacing: -.01em; margin: 0 0 16px; }
+.row { display: grid; grid-template-columns: 5fr 7fr; gap: 56px; align-items: center; }
+.row + .row { margin-top: 112px; }
+.row.flip { grid-template-columns: 7fr 5fr; }
+.row.flip .copy { order: 2; }
+.copy p { color: var(--muted); margin: 0 0 14px; }
+.copy ul { margin: 18px 0 0; padding: 0; list-style: none; }
+.copy li { display: flex; gap: 10px; margin: 0 0 10px; }
+.copy li svg.i { margin-top: 3px; color: var(--accent-strong); width: 18px; height: 18px; }
+
+/* Grid */
+.alt { background: var(--side); border-block: 1px solid var(--border); }
+.grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 20px; margin-top: 40px; }
+.card { background: var(--panel); border: 1px solid var(--border); border-radius: var(--radius); padding: 24px; }
+.card .ic { width: 40px; height: 40px; border-radius: 9px; display: grid; place-items: center;
+  background: var(--accent-subtle); color: var(--accent-strong); margin-bottom: 14px; }
+.card h3 { font-size: 17px; margin: 0 0 6px; }
+.card p { margin: 0; color: var(--muted); font-size: 15px; }
+.center { text-align: center; }
+.center .sub { color: var(--muted); max-width: 38em; margin: 0 auto; }
+
+/* Install */
+.steps { display: grid; grid-template-columns: 1fr 1fr; gap: 48px; margin-top: 40px; align-items: start; }
+.code { position: relative; background: var(--code-bg); color: var(--code-text); border-radius: var(--radius);
+  padding: 48px 22px 20px; font: 14.5px/1.75 var(--mono); overflow-x: auto; }
+.code pre { margin: 0; white-space: pre; }
+.code .c { color: #9ea3aa; }
+.code .p { color: var(--accent); user-select: none; }
+.copy-btn { position: absolute; top: 10px; right: 10px; display: flex; align-items: center; gap: 6px;
+  background: rgba(255,255,255,.08); color: var(--code-text); border: 1px solid rgba(255,255,255,.16);
+  border-radius: 6px; padding: 5px 10px; font: 13px var(--sans); cursor: pointer; }
+.copy-btn:hover { background: rgba(255,255,255,.16); }
+.copy-btn svg.i { width: 15px; height: 15px; }
+ol.how { margin: 0; padding: 0; list-style: none; counter-reset: s; }
+ol.how li { counter-increment: s; position: relative; padding-left: 46px; margin-bottom: 22px; }
+ol.how li::before { content: counter(s); position: absolute; left: 0; top: 0; width: 30px; height: 30px; border-radius: 50%;
+  background: var(--accent); color: var(--on-accent); font: 700 15px/30px var(--sans); text-align: center; }
+ol.how h3 { font-size: 17px; margin: 2px 0 4px; }
+ol.how p { margin: 0; color: var(--muted); font-size: 15.5px; }
+code { font: .9em var(--mono); background: var(--accent-subtle); padding: .1em .35em; border-radius: 4px; }
+
+footer { border-top: 1px solid var(--border); padding: 40px 0 56px; color: var(--muted); font-size: 15px; }
+footer .wrap { display: flex; align-items: center; gap: 16px; flex-wrap: wrap; }
+footer .brand span { font-size: 21px; }
+footer .brand img { width: 24px; height: 24px; }
+footer nav { margin-left: auto; display: flex; gap: 20px; }
+footer a { color: var(--muted); }
+
+@media (max-width: 900px) {
+  .row, .row.flip { grid-template-columns: 1fr; gap: 28px; }
+  .row.flip .copy { order: 0; }
+  .grid { grid-template-columns: 1fr 1fr; }
+  .steps { grid-template-columns: 1fr; }
+}
+@media (max-width: 600px) {
+  .wrap { padding: 0 16px; }
+  .nav-links a:not(.btn) { display: none; }
+  .hero { padding-top: 48px; }
+  .hero .shot { margin-top: 40px; }
+  .grid { grid-template-columns: 1fr; }
+  section { padding: 64px 0; }
+  .row + .row { margin-top: 72px; }
+  footer nav { margin-left: 0; }
+}
+</style>
+</head>
+<body>
+
+<svg width="0" height="0" style="position:absolute" aria-hidden="true">
+  <symbol id="i-github" viewBox="0 0 24 24"><path d="M9 19c-4.3 1.4-4.3-2.5-6-3m12 5v-3.5c0-1 .1-1.4-.5-2 2.8-.3 5.5-1.4 5.5-6a4.6 4.6 0 0 0-1.3-3.2 4.2 4.2 0 0 0-.1-3.2s-1.1-.3-3.5 1.3a12.3 12.3 0 0 0-6.2 0C6.5 2.8 5.4 3.1 5.4 3.1a4.2 4.2 0 0 0-.1 3.2A4.6 4.6 0 0 0 4 9.5c0 4.6 2.7 5.7 5.5 6-.6.6-.6 1.2-.5 2V21"/></symbol>
+  <symbol id="i-server" viewBox="0 0 24 24"><rect x="3" y="3" width="18" height="7" rx="2"/><rect x="3" y="14" width="18" height="7" rx="2"/><path d="M7 6.5h.01M7 17.5h.01"/></symbol>
+  <symbol id="i-lock" viewBox="0 0 24 24"><rect x="4" y="11" width="16" height="10" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/></symbol>
+  <symbol id="i-box" viewBox="0 0 24 24"><path d="M21 8 12 3 3 8v8l9 5 9-5z"/><path d="m3 8 9 5 9-5M12 13v8"/></symbol>
+  <symbol id="i-check" viewBox="0 0 24 24"><path d="M20 6 9 17l-5-5"/></symbol>
+  <symbol id="i-search" viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></symbol>
+  <symbol id="i-quote" viewBox="0 0 24 24"><path d="M6 17h3l2-4V7H5v6h3zM14 17h3l2-4V7h-6v6h3z"/></symbol>
+  <symbol id="i-braces" viewBox="0 0 24 24"><path d="M8 3H7a2 2 0 0 0-2 2v5a2 2 0 0 1-2 2 2 2 0 0 1 2 2v5a2 2 0 0 0 2 2h1M16 3h1a2 2 0 0 1 2 2v5a2 2 0 0 0 2 2 2 2 0 0 0-2 2v5a2 2 0 0 1-2 2h-1"/></symbol>
+  <symbol id="i-folder" viewBox="0 0 24 24"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></symbol>
+  <symbol id="i-refresh" viewBox="0 0 24 24"><path d="M21 12a9 9 0 0 1-15.5 6.2L3 16M3 12a9 9 0 0 1 15.5-6.2L21 8M21 3v5h-5M3 21v-5h5"/></symbol>
+  <symbol id="i-file" viewBox="0 0 24 24"><path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z"/><path d="M14 3v5h5M9 13h6M9 17h4"/></symbol>
+  <symbol id="i-disk" viewBox="0 0 24 24"><path d="M22 12H2M5.5 5h13L22 12v6a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2v-6z"/><path d="M6 16h.01M10 16h.01"/></symbol>
+  <symbol id="i-copy" viewBox="0 0 24 24"><rect x="9" y="9" width="12" height="12" rx="2"/><path d="M5 15H4a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1h10a1 1 0 0 1 1 1v1"/></symbol>
+  <symbol id="i-tag" viewBox="0 0 24 24"><path d="M20.6 13.4 13.4 20.6a2 2 0 0 1-2.8 0L3 13V3h10l7.6 7.6a2 2 0 0 1 0 2.8z"/><path d="M7.5 7.5h.01"/></symbol>
+</svg>
+
+<header class="nav" id="nav">
+  <div class="wrap">
+    <a class="brand" href="#top" aria-label="Bubo home"><img src="assets/owl.svg" alt=""><span>Bubo</span></a>
+    <nav class="nav-links" aria-label="Main">
+      <a href="#features">Features</a>
+      <a href="#install">Install</a>
+      <a class="btn small" href="https://github.com/magonji/Bubo"><svg class="i"><use href="#i-github"/></svg> GitHub</a>
+    </nav>
+  </div>
+</header>
+
+<main id="top">
+  <div class="hero">
+    <div class="wrap">
+      <h1>Your paper library, on <em>your</em> server.</h1>
+      <p class="lead">Bubo is a self-hosted reference manager in the spirit of Zotero. Your papers and PDFs live on your own machine, and you read, annotate and cite them from any browser.</p>
+      <div class="cta">
+        <a class="btn primary" href="#install">Get started</a>
+        <a class="btn" href="https://github.com/magonji/Bubo"><svg class="i"><use href="#i-github"/></svg> View on GitHub</a>
+      </div>
+      <ul class="facts">
+        <li><svg class="i"><use href="#i-server"/></svg> Runs on your own server</li>
+        <li><svg class="i"><use href="#i-box"/></svg> One Docker container</li>
+        <li><svg class="i"><use href="#i-lock"/></svg> No accounts, no cloud</li>
+      </ul>
+      <div class="shot">
+        <div class="bar" aria-hidden="true"><i></i><i></i><i></i></div>
+        <picture>
+          <source srcset="assets/screenshots/library-dark.png" media="(prefers-color-scheme: dark)">
+          <img src="assets/screenshots/library-light.png" width="2880" height="1720"
+            alt="The Bubo library: collections and tags on the left, a list of papers in the middle and the selected paper's details on the right">
+        </picture>
+      </div>
+    </div>
+  </div>
+
+  <section id="features">
+    <div class="wrap">
+      <div class="row">
+        <div class="copy">
+          <p class="eyebrow">Search</p>
+          <h2>Find the sentence, not just the paper</h2>
+          <p>Search covers titles, authors, abstracts, your notes and annotations, and the full text of every PDF. Each result shows the sentence that matched.</p>
+          <ul>
+            <li><svg class="i"><use href="#i-check"/></svg> The item pane lists every matching sentence with its page number</li>
+            <li><svg class="i"><use href="#i-check"/></svg> Click one to open the PDF at that page, with the words highlighted</li>
+            <li><svg class="i"><use href="#i-check"/></svg> Accent-insensitive, and words match by prefix</li>
+          </ul>
+        </div>
+        <div class="shot"><img src="assets/screenshots/search.png" width="2880" height="1720" loading="lazy"
+          alt="Searching for 'serrations' shows the matching sentence under the result and both sentences with page numbers in the item pane"></div>
+      </div>
+
+      <div class="row flip">
+        <div class="copy">
+          <p class="eyebrow">Read and annotate</p>
+          <h2>Highlights and notes that stay with the paper</h2>
+          <p>Read in the built-in viewer. Select text to highlight it in one of six colours, add a comment, or pin a note anywhere on a page.</p>
+          <ul>
+            <li><svg class="i"><use href="#i-check"/></svg> Annotations are kept on the server; the original PDF is never changed</li>
+            <li><svg class="i"><use href="#i-check"/></svg> Download a copy with standard PDF annotations, readable in any PDF reader</li>
+            <li><svg class="i"><use href="#i-check"/></svg> Your comments are included in search</li>
+          </ul>
+        </div>
+        <div class="shot"><img src="assets/screenshots/viewer.png" width="2880" height="1720" loading="lazy"
+          alt="The PDF viewer with yellow, green and blue highlights, a pinned note, and the annotations listed with comments in a side panel"></div>
+      </div>
+
+      <div class="row">
+        <div class="copy">
+          <p class="eyebrow">Add papers</p>
+          <h2>Paste an identifier or drop a PDF</h2>
+          <p>One box takes a DOI, an arXiv ID, a PubMed ID or a publisher's URL and works out which it is. Bubo fetches the metadata from Crossref, arXiv or PubMed and downloads an open-access PDF when there is one.</p>
+          <ul>
+            <li><svg class="i"><use href="#i-check"/></svg> Dropped PDFs are identified from their DOI or arXiv stamp</li>
+            <li><svg class="i"><use href="#i-check"/></svg> Find PDF looks on arXiv, Unpaywall and the publisher's page</li>
+            <li><svg class="i"><use href="#i-check"/></svg> Duplicates are detected by file, DOI and arXiv ID</li>
+          </ul>
+        </div>
+        <div class="shot"><img src="assets/screenshots/add.png" width="2880" height="1720" loading="lazy"
+          alt="The Add papers dialog with a DOI typed in, a drop zone for PDFs, a collection picker and a reading-list switch"></div>
+      </div>
+
+      <div class="row flip">
+        <div class="copy">
+          <p class="eyebrow">Organise</p>
+          <h2>A reading list that works like a queue</h2>
+          <p>Drag papers onto the reading list, or have new papers go there straight away. Order it by when each paper was added, oldest or newest first.</p>
+          <ul>
+            <li><svg class="i"><use href="#i-check"/></svg> Nested collections; drag papers and collections to file them</li>
+            <li><svg class="i"><use href="#i-check"/></svg> Tags and notes on every paper</li>
+            <li><svg class="i"><use href="#i-check"/></svg> Select several papers to tag, file or export them in one go</li>
+          </ul>
+        </div>
+        <div class="shot"><img src="assets/screenshots/reading-list.png" width="2880" height="1720" loading="lazy"
+          alt="The reading list with four papers, ordered oldest added first"></div>
+      </div>
+    </div>
+  </section>
+
+  <section class="alt">
+    <div class="wrap">
+      <div class="center">
+        <p class="eyebrow">And also</p>
+        <h2>The rest of what you need to write</h2>
+      </div>
+      <div class="grid">
+        <div class="card"><div class="ic"><svg class="i"><use href="#i-quote"/></svg></div>
+          <h3>Copy a citation</h3><p>APA 7, Chicago, MLA 9, Harvard, IEEE or Vancouver, with formatting that survives pasting into a word processor.</p></div>
+        <div class="card"><div class="ic"><svg class="i"><use href="#i-braces"/></svg></div>
+          <h3>BibTeX export</h3><p>Copy one entry, or export everything in the current view to a <code>.bib</code> file.</p></div>
+        <div class="card"><div class="ic"><svg class="i"><use href="#i-refresh"/></svg></div>
+          <h3>Refresh metadata</h3><p>Compare with Crossref or arXiv field by field, and choose what to replace. Your corrections are never overwritten by surprise.</p></div>
+        <div class="card"><div class="ic"><svg class="i"><use href="#i-file"/></svg></div>
+          <h3>Readable file names</h3><p>PDFs are stored in one folder as <code>Author et al. - Year - Title.pdf</code>, so the files are useful without Bubo.</p></div>
+        <div class="card"><div class="ic"><svg class="i"><use href="#i-disk"/></svg></div>
+          <h3>Works on an external disk</h3><p>Keep the library on an exFAT or NTFS drive. The data folder must already exist, so Bubo never quietly creates an empty library elsewhere.</p></div>
+        <div class="card"><div class="ic"><svg class="i"><use href="#i-search"/></svg></div>
+          <h3>Keyboard friendly</h3><p><code>/</code> or Ctrl/Cmd+K to search, arrow keys to move, Enter to open the PDF, N to add a note.</p></div>
+      </div>
+    </div>
+  </section>
+
+  <section id="install">
+    <div class="wrap">
+      <div class="center">
+        <p class="eyebrow">Install</p>
+        <h2>Running in a few minutes</h2>
+        <p class="sub">You need a server with Docker and Docker Compose. Bubo is for a single user and is protected by one password.</p>
+      </div>
+      <div class="steps">
+        <ol class="how">
+          <li><h3>Get the code</h3><p>Clone the repository onto your server.</p></li>
+          <li><h3>Configure it</h3><p>Copy <code>.env.example</code> to <code>.env</code>, then set <code>BUBO_PASSWORD</code> and <code>BUBO_DATA_DIR</code>, the folder that will hold the library. The folder must already exist.</p></li>
+          <li><h3>Start it</h3><p>Build and start the container, then open <code>http://localhost:8000</code>. To reach it from elsewhere, put it behind an HTTPS reverse proxy such as Caddy.</p></li>
+        </ol>
+        <div class="code">
+          <button class="copy-btn" type="button" data-copy="install"><svg class="i"><use href="#i-copy"/></svg><span>Copy</span></button>
+<pre id="install-cmds"><span class="p">$ </span>git clone https://github.com/magonji/Bubo.git
+<span class="p">$ </span>cd Bubo
+<span class="p">$ </span>cp .env.example .env
+<span class="c"># edit .env: BUBO_PASSWORD, BUBO_DATA_DIR</span>
+<span class="p">$ </span>docker compose up -d --build</pre>
+        </div>
+      </div>
+      <p class="center" style="margin-top:32px;color:var(--muted)">External disks, permissions, HTTPS and every setting are covered in the <a href="https://github.com/magonji/Bubo#readme">README</a>.</p>
+    </div>
+  </section>
+</main>
+
+<footer>
+  <div class="wrap">
+    <a class="brand" href="#top"><img src="assets/owl.svg" alt=""><span>Bubo</span></a>
+    <span>A reference manager that lives on your server.</span>
+    <nav aria-label="Footer">
+      <a href="https://github.com/magonji/Bubo">Source code</a>
+      <a href="https://github.com/magonji/Bubo/issues">Report a problem</a>
+    </nav>
+  </div>
+</footer>
+
+<script>
+  const nav = document.getElementById("nav");
+  const onScroll = () => nav.classList.toggle("scrolled", window.scrollY > 8);
+  window.addEventListener("scroll", onScroll, { passive: true }); onScroll();
+
+  document.querySelectorAll("[data-copy]").forEach(btn => {
+    btn.addEventListener("click", async () => {
+      const text = document.getElementById("install-cmds").innerText
+        .split("\n").filter(l => !l.trim().startsWith("#")).map(l => l.replace(/^\$ /, "")).join("\n");
+      const label = btn.querySelector("span");
+      try { await navigator.clipboard.writeText(text); label.textContent = "Copied"; }
+      catch { label.textContent = "Select and copy"; }
+      setTimeout(() => { label.textContent = "Copy"; }, 1800);
+    });
+  });
+</script>
+</body>
+</html>

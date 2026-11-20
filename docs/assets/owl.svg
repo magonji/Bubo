@@ -1,0 +1,14 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" role="img" aria-label="Bubo">
+  <g fill="none" stroke="#E8A33D" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
+    <!-- Body with the eagle-owl's ear tufts -->
+    <path d="M8.5 17.5V9.5L10 4l3.6 4h4.8L22 4l1.5 5.5v8c0 5.2-3.4 9-7.5 9s-7.5-3.8-7.5-9z"/>
+    <!-- Brows meeting in a V: the facial disc -->
+    <path d="M10.2 11.2Q13 9.6 16 12.6Q19 9.6 21.8 11.2"/>
+    <!-- Eyes and beak -->
+    <circle cx="13" cy="14.6" r="1.9"/>
+    <circle cx="19" cy="14.6" r="1.9"/>
+    <path d="M16 15.8v2.2"/>
+    <!-- Perched on a branch -->
+    <path d="M5 29h22M13.5 26.4V29M18.5 26.4V29"/>
+  </g>
+</svg>
