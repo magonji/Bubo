@@ -28,6 +28,11 @@ them from the browser.
   images that no caption claims, ignoring logos and small images. They are kept with their
   captions as thumbnails for the phone layout and a figure carousel. Any figure can be made the
   paper's cover. For papers added earlier, run `python -m app.cli figures` (see below).
+- **The paper's pane** on the right of the library shows the selected paper the same way as
+  the phone's paper screen: its figures, journal and year, title, an Open PDF button, Cite and
+  Collection, the abstract, details, collections, tags, notes saved as you type and related
+  papers, plus the search matches and annotations. The ⋯ menu holds the other actions, and
+  **Edit details** opens the form with every field.
 - **On phones** (screens up to 760 px) the library is a gallery of figure cards or a list with
   thumbnails, and each paper has its own screen at `/paper/<id>`: a carousel of its figures,
   the abstract, details with a copyable DOI, collections, tags, notes saved as you type and

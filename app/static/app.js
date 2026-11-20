@@ -895,9 +895,28 @@ function collectionOptions(selected) {
   return out.join("") || '<span class="muted">No collections</span>';
 }
 
+// The item pane: the paper sheet (paper.js), the same as the phone's paper screen; or, after
+// "Edit details", the form with every field. On phones this pane is only used for the form.
 function renderDetail(item) {
   const box = $("#detail");
-  if (!item) return renderOverview();
+  if (!item) {
+    state.editing = null;
+    box.classList.remove("editing");
+    paneView.forget();
+    return renderOverview();
+  }
+  if (state.editing !== item.id) state.editing = null;
+  if (narrow.matches || state.editing === item.id) return renderEditForm(item);
+  box.classList.remove("editing");
+  overviewToken++;
+  paneView.render(item.id, { keepPlace: paneView.state.id === item.id });
+}
+
+function renderEditForm(item) {
+  const box = $("#detail");
+  const desk = !narrow.matches;
+  box.classList.toggle("editing", desk);
+  if (desk) paneView.forget();
   const authorsText = item.authors.map((a) => [a.family, a.given].filter(Boolean).join(", ")).join("\n");
   const links = [
     item.doi && `<a href="https://doi.org/${esc(item.doi)}" target="_blank" rel="noopener">DOI</a>`,
@@ -905,6 +924,7 @@ function renderDetail(item) {
     item.url && `<a href="${esc(item.url)}" target="_blank" rel="noopener">Website</a>`,
   ].filter(Boolean).join(" · ");
   box.innerHTML = `
+    ${desk ? `<div class="edit-back"><button type="button" id="edit-back">${icon("chevron-left")} Back to the paper</button></div>` : ""}
     <h2>${esc(item.title) || "(untitled)"}</h2>
     <div class="sub">${esc(authorsShort(item.authors))}${item.year ? " · " + item.year : ""}
       ${links ? `<div class="ids">${links}</div>` : ""}</div>
@@ -959,9 +979,14 @@ function renderDetail(item) {
       <div class="save-bar"><button type="submit" class="primary">Save changes</button></div>
     </form>`;
 
-  if (item.annotation_count) loadDetailAnnotations(item);
+  if (item.annotation_count && !desk) loadDetailAnnotations(item);
   $("#detail-supplementary").addEventListener("click", (e) => supplementaryAction(e, item));
-  if (state.q && item.has_file) loadDetailMatches(item, state.q);
+  $("#edit-back")?.addEventListener("click", () => {
+    if (state.formDirty && !confirm("Your changes have not been saved. Discard them?")) return;
+    state.editing = null;
+    renderDetail(item);
+  });
+  if (state.q && item.has_file && !desk) loadDetailMatches(item, state.q);
   box.querySelector(".buttons").addEventListener("click", (e) => {
     const a = e.target.closest("[data-a]")?.dataset.a;
     if (a) itemAction(a, item);
@@ -985,6 +1010,7 @@ function renderDetail(item) {
     try {
       await api(`/api/items/${item.id}`, { method: "PATCH", json: body });
       toast("Saved");
+      state.editing = null;   // back to the paper sheet
       refresh();
     } catch (err) { toast(err.message, true); }
   });
@@ -1017,6 +1043,9 @@ async function renderOverview() {
 // Several papers selected: bulk actions.
 function renderMulti() {
   overviewToken++;
+  state.editing = null;
+  $("#detail").classList.remove("editing");
+  paneView.forget();
   const ids = [...state.selectedIds];
   const items = state.items.filter((i) => state.selectedIds.has(i.id));
   const onList = items.filter((i) => i.to_read).length;
