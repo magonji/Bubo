@@ -244,7 +244,7 @@ footer a { color: var(--muted); }
         <picture>
           <source srcset="assets/screenshots/library-dark.png" media="(prefers-color-scheme: dark)">
           <img src="assets/screenshots/library-light.png" width="2880" height="1720"
-            alt="The Bubo library: collections and tags on the left, a list of papers in the middle and the selected paper's details on the right">
+            alt="The Bubo library: collections and tags on the left, a list of papers in the middle and, on the right, the selected paper with a carousel of its figures, its title, an Open PDF button and its abstract">
         </picture>
       </div>
     </div>
@@ -264,7 +264,7 @@ footer a { color: var(--muted); }
           </ul>
         </div>
         <div class="shot"><img src="assets/screenshots/search.png" width="2880" height="1720" loading="lazy"
-          alt="Searching for 'serrations' shows the matching sentence under the result and both sentences with page numbers in the item pane"></div>
+          alt="Searching for 'spectra' shows the matching sentence under each result, and the paper's pane lists the sentence with its page number"></div>
       </div>
 
       <div class="row flip">
@@ -300,6 +300,21 @@ footer a { color: var(--muted); }
 
       <div class="row flip">
         <div class="copy">
+          <p class="eyebrow">Browse</p>
+          <h2>See your papers by their figures</h2>
+          <p>Bubo finds the figures in every PDF. Browse the library as a table, a gallery of figure cards or a list with thumbnails, and open any paper to swipe through its figures.</p>
+          <ul>
+            <li><svg class="i"><use href="#i-check"/></svg> Vector plots keep their axes and labels, with the caption beneath</li>
+            <li><svg class="i"><use href="#i-check"/></svg> Choose which figure is a paper's cover</li>
+            <li><svg class="i"><use href="#i-check"/></svg> With nothing selected, an overview of what you added lately, what is left to read and what needs fixing</li>
+          </ul>
+        </div>
+        <div class="shot"><img src="assets/screenshots/gallery.png" width="2880" height="1720" loading="lazy"
+          alt="The library as a gallery of cards, each showing a figure from the paper, with the selected paper's figures and details on the right"></div>
+      </div>
+
+      <div class="row">
+        <div class="copy">
           <p class="eyebrow">Organise</p>
           <h2>A reading list that works like a queue</h2>
           <p>Drag papers onto the reading list, or have new papers go there straight away. Like every list, it shows the newest papers first, or works as a queue in the order you added them.</p>
@@ -310,7 +325,7 @@ footer a { color: var(--muted); }
           </ul>
         </div>
         <div class="shot"><img src="assets/screenshots/reading-list.png" width="2880" height="1720" loading="lazy"
-          alt="The reading list with four papers, ordered oldest added first"></div>
+          alt="The reading list shown as a list with figure thumbnails; the selected paper's pane shows its details, collections, tags and notes"></div>
       </div>
     </div>
   </section>

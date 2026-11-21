@@ -48,8 +48,9 @@ them from the browser.
   first (by publication year); the table can be sorted by any column, including the date
   added, and has a reading-list column and icons for notes and PDFs. Shift-click selects a
   range and Cmd/Ctrl-click adds or removes papers, for bulk actions or for dragging several
-  papers onto a collection at once. With nothing selected, the
-  item pane shows recently added papers, the reading list and papers with incomplete metadata.
+  papers onto a collection at once. With nothing selected (click an empty part of the list),
+  the pane shows a library overview: counts of papers, figure cards for the recently added
+  papers and the reading list, and the papers with incomplete metadata and what each lacks.
 - A **reading list** for papers you want to read: add or remove a paper with the bookmark button
   in its pane, or drag papers onto "Reading list" in the sidebar. Papers on it are marked in the
   library list. New papers can go straight onto it: turn on "Put new papers on the reading
