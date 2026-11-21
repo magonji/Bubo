@@ -1,6 +1,7 @@
 """HTTP API and web interface server for Bubo."""
 
 import hmac
+import json
 import re
 import mimetypes
 import time
@@ -15,7 +16,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 from starlette.middleware.sessions import SessionMiddleware
 
-from . import annotate, bibtex, citation, db, figures, metadata, pdf, storage, textsearch
+from . import annotate, bibtex, citation, db, figures, metadata, pdf, people, storage, textsearch
 from .config import settings
 
 STATIC = Path(__file__).parent / "static"
@@ -44,6 +45,8 @@ _startup_conn = db.connect()
 storage.sync_all(_startup_conn)
 # A contact email saved in Settings takes precedence over BUBO_CONTACT_EMAIL.
 settings.contact_email = db.get_settings(_startup_conn).get("contact_email") or settings.env_contact_email
+# Look for new publications by followed people every few hours (people.py).
+people.start_radar()
 _startup_conn.close()
 
 Conn = Annotated[object, Depends(db.get_db)]
@@ -536,6 +539,139 @@ def find_pdf(item_id: int, conn: Conn):
     db.set_file(conn, item_id, _store_pdf(data), pdf.analyze(data).fulltext)
     _pdf_added(conn, item_id)
     return db.get_item(conn, item_id)
+
+
+# --------------------------------------------------------------------------- #
+# People and the radar
+# --------------------------------------------------------------------------- #
+
+class FollowIn(BaseModel):
+    orcid: str = Field(max_length=200)
+
+
+class RadarSeenIn(BaseModel):
+    ids: list[int] | None = None      # None: everything on the radar
+
+
+def _people_error(e: Exception):
+    if isinstance(e, people.PeopleError):
+        return HTTPException(422, str(e))
+    return HTTPException(502, f"Error contacting ORCID or OpenAlex: {e}")
+
+
+@app.get("/api/people", dependencies=[Auth])
+def list_people(conn: Conn):
+    return {"people": people.list_people(conn), "radar_unseen": people.radar_unseen(conn)}
+
+
+@app.post("/api/people", dependencies=[Auth], status_code=201)
+def follow_person(body: FollowIn, conn: Conn):
+    try:
+        pid = people.follow(conn, body.orcid)
+    except (people.PeopleError, httpx.HTTPError) as e:
+        raise _people_error(e)
+    return next(p for p in people.list_people(conn) if p["id"] == pid)
+
+
+def _person_or_404(conn, person_id: int) -> dict:
+    p = next((p for p in people.list_people(conn) if p["id"] == person_id), None)
+    if p is None:
+        raise HTTPException(404, "You do not follow that person")
+    return p
+
+
+@app.get("/api/people/{person_id}", dependencies=[Auth])
+def get_person(person_id: int, conn: Conn):
+    return {**_person_or_404(conn, person_id), "works_list": people.person_works(conn, person_id)}
+
+
+@app.delete("/api/people/{person_id}", dependencies=[Auth])
+def unfollow_person(person_id: int, conn: Conn):
+    _person_or_404(conn, person_id)
+    conn.execute("DELETE FROM people WHERE id = ?", (person_id,))
+    conn.commit()
+    return {"ok": True}
+
+
+@app.post("/api/people/{person_id}/refresh", dependencies=[Auth])
+def refresh_person(person_id: int, conn: Conn):
+    _person_or_404(conn, person_id)
+    try:
+        new = people.refresh_person(conn, person_id)
+    except (people.PeopleError, httpx.HTTPError) as e:
+        raise _people_error(e)
+    return {"new": new, **_person_or_404(conn, person_id)}
+
+
+@app.get("/api/radar", dependencies=[Auth])
+def get_radar(conn: Conn):
+    return {"works": people.radar(conn), "unseen": people.radar_unseen(conn)}
+
+
+@app.post("/api/radar/refresh", dependencies=[Auth])
+def refresh_radar(conn: Conn):
+    """Look at everyone followed now (the radar also does this every few hours)."""
+    return {"new": people.refresh_all(conn), "unseen": people.radar_unseen(conn)}
+
+
+@app.post("/api/radar/seen", dependencies=[Auth])
+def radar_seen(body: RadarSeenIn, conn: Conn):
+    stamp = db.now()
+    if body.ids is None:
+        conn.execute("UPDATE person_works SET seen_at = ? WHERE is_new = 1 AND seen_at IS NULL", (stamp,))
+    else:
+        keys = [r[0] for r in conn.execute(
+            f"SELECT work_key FROM person_works WHERE id IN ({','.join('?' * len(body.ids))})", body.ids)] if body.ids else []
+        for k in keys:
+            conn.execute("UPDATE person_works SET seen_at = ? WHERE work_key = ? AND seen_at IS NULL", (stamp, k))
+    conn.commit()
+    return {"unseen": people.radar_unseen(conn)}
+
+
+@app.post("/api/radar/{work_id}/dismiss", dependencies=[Auth])
+def radar_dismiss(work_id: int, conn: Conn):
+    row = conn.execute("SELECT work_key FROM person_works WHERE id = ?", (work_id,)).fetchone()
+    if row is None:
+        raise HTTPException(404, "Not on the radar")
+    conn.execute("UPDATE person_works SET dismissed_at = ? WHERE work_key = ?", (db.now(), row["work_key"]))
+    conn.commit()
+    return {"unseen": people.radar_unseen(conn)}
+
+
+class AddWorkIn(BaseModel):
+    collection_id: int | None = None
+    to_read: bool = False
+
+
+@app.post("/api/works/{work_id}/add", dependencies=[Auth])
+def add_work(work_id: int, conn: Conn, body: AddWorkIn | None = None):
+    """Add a followed person's publication to the library: by its DOI when it has one (with
+    the usual metadata and open-access PDF), otherwise from what ORCID/OpenAlex gave."""
+    body = body or AddWorkIn()
+    w = conn.execute("SELECT * FROM person_works WHERE id = ?", (work_id,)).fetchone()
+    if w is None:
+        raise HTTPException(404, "Publication not found")
+    if w["doi"]:
+        result = import_identifier(ImportIn(identifier=w["doi"], collection_id=body.collection_id,
+                                            to_read=body.to_read), conn)
+    else:
+        if w["item_id"] and db.get_item(conn, w["item_id"]):
+            return {"status": "duplicate", "item": db.get_item(conn, w["item_id"])}
+        year = int(w["pub_date"][:4]) if w["pub_date"] else None
+        item_id = db.create_item(conn, {
+            "item_type": "article" if (w["type"] or "").endswith("article") else "misc",
+            "title": w["title"], "authors": json.loads(w["authors"] or "[]"), "year": year,
+            "venue": w["venue"], "url": w["url"],
+        }, collection_ids=_collection_ids(conn, body.collection_id))
+        if body.to_read:
+            _put_on_reading_list(conn, [item_id])
+        conn.execute("UPDATE person_works SET item_id = ? WHERE work_key = ?", (item_id, w["work_key"]))
+        conn.commit()
+        result = {"status": "created", "item": db.get_item(conn, item_id)}
+    # Adding a paper from the radar also counts as having seen it there.
+    conn.execute("UPDATE person_works SET seen_at = COALESCE(seen_at, ?) WHERE work_key = ?", (db.now(), w["work_key"]))
+    conn.commit()
+    return result
 
 
 @app.get("/api/overview", dependencies=[Auth])

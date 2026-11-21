@@ -42,6 +42,13 @@ them from the browser.
   related papers, with buttons to open the PDF, cite, file and share it. Papers without figures
   get a cover coloured from the journal's name. Bubo can be added to the home screen, where it
   opens like an app with the owl as its icon. On a computer the table stays as it is.
+- **Follow scientists** by their ORCID iD (the **+** next to "People" in the sidebar). Bubo
+  lists each person's publications, from their ORCID record and from OpenAlex, with an **Add**
+  button for those not yet in your library (by DOI they come in with full metadata and, when
+  there is one, an open-access PDF). Every 12 hours it looks for new ones: publications from
+  the last two months appear on the **Radar**, marked as new until you open it. OpenAlex
+  sometimes credits a paper to the wrong ORCID iD, so its papers only count when the name
+  printed on them matches the person's.
 - **Find PDF** for papers without one (the dimmed icon in the PDF column, or the button in the
   item pane): looks on arXiv, Unpaywall (with `BUBO_CONTACT_EMAIL` set) and the publisher's page.
 - **The order you choose** (by year, date added, title or author) is remembered between visits.
@@ -210,6 +217,7 @@ If you use nginx, raise `client_max_body_size` (e.g. `200m`) so that large PDFs 
 | `BUBO_CONTACT_EMAIL` | Optional. Enables open-access PDF lookup via Unpaywall and is sent to Crossref and PubMed to use their polite pools. It can also be set in Settings, which takes precedence. |
 | `BUBO_SECURE_COOKIES` | `true` when served over HTTPS. |
 | `BUBO_SESSION_DAYS` | Session length in days (default 30). |
+| `BUBO_RADAR_HOURS` | How often to look for new publications by the people you follow (default 12; 0 turns it off; "Check now" still works). |
 | `BUBO_SECRET` | Optional session key; otherwise one is generated in `data/.secret_key`. |
 
 ### Maintenance commands
@@ -260,9 +268,10 @@ Layout:
 - `app/storage.py`: the `papers/` folder (readable names, renames, migration of older layouts)
 - `app/figures.py`: finds figures in PDFs and stores them as WebP thumbnails (PyMuPDF, Pillow)
 - `app/cli.py`: maintenance commands
+- `app/people.py`: following scientists by ORCID iD, and the radar (ORCID and OpenAlex APIs)
 - `docker-entrypoint.sh`: data-folder permissions, then drops privileges
 - `app/static/`: web interface (plain HTML/CSS/JS, no build step); `viewer.js` is the PDF viewer
-  and `paper.js` the paper screen on phones
+  and `paper.js` the paper screen on phones; `people.js` shows the people you follow and the radar
 - `app/static/fonts/`: Fraunces (the name, titles on phones) and Inter (the phone layout),
   both under the SIL Open Font License
 - `app/static/vendor/pdfjs/`: [PDF.js](https://github.com/mozilla/pdf.js) 6.4.299 (Apache-2.0),

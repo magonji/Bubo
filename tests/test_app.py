@@ -839,3 +839,100 @@ def test_figures_report_and_newer_versions(client, capsys):
     assert "Every paper already has its figures." in capsys.readouterr().out
     for i in (with_figs, plain, no_pdf):
         client.delete(f"/api/items/{i}")
+
+
+# --------------------------------------------------------------------------- #
+# People and the radar
+# --------------------------------------------------------------------------- #
+
+def test_orcid_ids():
+    from app import people
+    assert people.normalise_orcid("https://orcid.org/0000-0002-1825-0097") == "0000-0002-1825-0097"
+    assert people.normalise_orcid("000000021825009x".replace("x", "7")) == "0000-0002-1825-0097"
+    assert people.normalise_orcid("0000-0000-1000-003x") == "0000-0000-1000-003X"   # checksum X
+    for bad in ("0000-0002-1825-0098", "1234", ""):
+        with pytest.raises(people.PeopleError):
+            people.normalise_orcid(bad)
+
+
+def test_following_people_and_the_radar(client, monkeypatch):
+    from datetime import date, timedelta
+    from app import people
+    login(client)
+    for it in client.get("/api/items").json():
+        client.delete(f"/api/items/{it['id']}")
+    recent = (date.today() - timedelta(days=10)).isoformat()
+    works = [
+        {"key": "doi:10.1234/test.5678", "doi": "10.1234/test.5678", "title": "Deep Learning for Everything",
+         "authors": [{"given": "Ada", "family": "Lovelace"}], "venue": "Journal of Testing",
+         "pub_date": recent, "type": "article", "url": None},
+        {"key": "doi:10.1/old", "doi": "10.1/old", "title": "An old paper", "authors": [], "venue": None,
+         "pub_date": "2015", "type": "article", "url": None},
+    ]
+    monkeypatch.setattr(people, "fetch_person", lambda o: {"name": "Ada Lovelace", "family": "Lovelace",
+                                                           "affiliation": "Analytical Engines"})
+    monkeypatch.setattr(people, "fetch_works", lambda o, family=None: list(works))
+
+    assert client.post("/api/people", json={"orcid": "0000-0002-1825-0098"}).status_code == 422
+    p = client.post("/api/people", json={"orcid": "https://orcid.org/0000-0002-1825-0097"}).json()
+    assert (p["name"], p["orcid"], p["works"], p["unseen"]) == ("Ada Lovelace", "0000-0002-1825-0097", 2, 1)
+    assert client.post("/api/people", json={"orcid": "0000-0002-1825-0097"}).status_code == 422   # already followed
+
+    # On the radar: only the recent work.
+    radar = client.get("/api/radar").json()
+    assert [w["title"] for w in radar["works"]] == ["Deep Learning for Everything"] and radar["unseen"] == 1
+    assert radar["works"][0]["people"] == ["Ada Lovelace"]
+
+    # A new publication appears at the next look; an old one added to ORCID does not.
+    works.append({"key": "openalex:W1", "doi": None, "title": "A brand new preprint", "authors": [],
+                  "venue": None, "pub_date": date.today().isoformat(), "type": "preprint", "url": "https://example.org/w1"})
+    works.append({"key": "doi:10.1/older", "doi": "10.1/older", "title": "Added to ORCID late", "authors": [],
+                  "venue": None, "pub_date": "2010-01-01", "type": "article", "url": None})
+    assert client.post(f"/api/people/{p['id']}/refresh").json()["new"] == 1
+    radar = client.get("/api/radar").json()
+    assert [w["title"] for w in radar["works"]] == ["A brand new preprint", "Deep Learning for Everything"]
+
+    # Add to the library: by DOI through the usual import (here the fake Crossref)…
+    dl = next(w for w in radar["works"] if w["doi"])
+    r = client.post(f"/api/works/{dl['id']}/add", json={"to_read": True}).json()
+    assert r["status"] == "created" and r["item"]["to_read"] and r["item"]["venue"] == "Journal of Testing"
+    # …or, without a DOI, from what ORCID/OpenAlex gave.
+    pre = next(w for w in radar["works"] if not w["doi"])
+    r = client.post(f"/api/works/{pre['id']}/add").json()
+    assert r["status"] == "created" and r["item"]["title"] == "A brand new preprint" and r["item"]["year"] == date.today().year
+    assert client.post(f"/api/works/{pre['id']}/add").json()["status"] == "duplicate"
+    listed = {w["title"]: w["in_library"] for w in client.get(f"/api/people/{p['id']}").json()["works_list"]}
+    assert listed == {"Deep Learning for Everything": True, "A brand new preprint": True,
+                      "An old paper": False, "Added to ORCID late": False}
+
+    # Adding marked them as seen; dismissing takes one off the radar.
+    assert client.get("/api/radar").json()["unseen"] == 0
+    client.post(f"/api/radar/{pre['id']}/dismiss")
+    assert [w["title"] for w in client.get("/api/radar").json()["works"]] == ["Deep Learning for Everything"]
+
+    assert client.delete(f"/api/people/{p['id']}").json() == {"ok": True}
+    assert client.get("/api/people").json() == {"people": [], "radar_unseen": 0}
+    for it in client.get("/api/items").json():
+        client.delete(f"/api/items/{it['id']}")
+
+
+def test_openalex_works_need_the_persons_name():
+    """Papers that carry someone's ORCID iD by mistake are left out."""
+    from app import people
+    orcid = "0000-0002-1825-0097"
+    def work(title, raw):
+        return {"title": title, "doi": None, "id": f"https://openalex.org/W{abs(hash(title))}",
+                "publication_date": "2026-01-01", "type": "article",
+                "authorships": [{"raw_author_name": raw, "author": {"display_name": "Josiah Carberry",
+                                                                    "orcid": f"https://orcid.org/{orcid}"}}]}
+    class Fake:
+        def get(self, url, params=None):
+            class R:
+                def raise_for_status(self): pass
+                def json(self):
+                    return {"results": [work("His paper", "Carberry, J."), work("Also his", "Jósiah CARBERRY"),
+                                        work("Someone else's", "Meng Li")]}
+            return R()
+    titles = [w["title"] for w in people._openalex_works(Fake(), orcid, "Carberry")]
+    assert titles == ["His paper", "Also his"]
+    assert len(people._openalex_works(Fake(), orcid, None)) == 3      # no family name: keep all

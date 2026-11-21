@@ -32,6 +32,7 @@ const ICONS = {
   "file-search": '<path d="M13 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h4"/><path d="M13 3v5h5v2"/><circle cx="16.5" cy="16.5" r="3"/><path d="M21 21l-2.4-2.4"/>',
   "rows-1": '<path d="M4 6h16M4 10h16M4 14h16M4 18h16"/>',
   sort: '<path d="M8 20V4M4 8l4-4 4 4M16 4v16M12 16l4 4 4-4"/>',
+  radar: '<circle cx="12" cy="12" r="8.5"/><circle cx="12" cy="12" r="4.5"/><path d="M12 12l5.5-5.5"/><circle cx="12" cy="12" r="1"/>',
   search: '<circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/>',
   grid: '<rect x="4" y="4" width="6.5" height="6.5" rx="1.2"/><rect x="13.5" y="4" width="6.5" height="6.5" rx="1.2"/><rect x="4" y="13.5" width="6.5" height="6.5" rx="1.2"/><rect x="13.5" y="13.5" width="6.5" height="6.5" rx="1.2"/>',
   list: '<rect x="4" y="5" width="5" height="5" rx="1"/><rect x="4" y="14" width="5" height="5" rx="1"/><path d="M12 7.5h8M12 16.5h8"/>',
@@ -149,12 +150,18 @@ async function signOut() {
 // Data loading
 // --------------------------------------------------------------------------
 async function loadSidebar() {
-  [state.collections, state.tags, state.counts] = await Promise.all(
-    [api("/api/collections"), api("/api/tags"), api("/api/library-counts")]);
+  let people;
+  [state.collections, state.tags, state.counts, people] = await Promise.all(
+    [api("/api/collections"), api("/api/tags"), api("/api/library-counts"), api("/api/people")]);
+  state.people = people.people;
+  state.radarUnseen = people.radar_unseen;
   renderSidebar();
 }
 
 async function loadItems() {
+  // A followed person's publications, or the radar (people.js).
+  if (state.view.type === "person" || state.view.type === "radar") return loadWorks();
+  leaveWorksView();
   const p = new URLSearchParams({ sort: sortKey() });
   if (state.q) p.set("q", state.q);
   if (state.view.type === "collection") {
@@ -272,6 +279,7 @@ function renderSidebar() {
     `<span class="tag${state.view.type === "tag" && state.view.name === t.name ? " active" : ""}"
        data-tag="${esc(t.name)}">${esc(t.name)} <span class="muted">${t.count}</span></span>`).join("")
     || `<span class="muted tags-empty">Add tags from any paper's details.</span>`;
+  if (typeof renderPeople === "function") renderPeople();   // people.js
 }
 
 $("#tags").addEventListener("click", (e) => {
@@ -454,7 +462,7 @@ function authorsShort(a) {
 function sectionTitle() {
   const v = state.view;
   return { all: "My library", unfiled: "Unfiled items", toread: "Reading list",
-    collection: v.name, tag: `Tag: ${v.name}` }[v.type];
+    collection: v.name, tag: `Tag: ${v.name}`, radar: "Radar", person: v.name }[v.type];
 }
 function viewTitle() {
   return state.q ? `${sectionTitle()} — “${state.q}”` : sectionTitle();

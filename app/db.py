@@ -106,6 +106,37 @@ CREATE TABLE IF NOT EXISTS figures (
     thumb_width  INTEGER, thumb_height INTEGER
 );
 CREATE INDEX IF NOT EXISTS idx_figures_item ON figures(item_id, idx);
+
+-- Scientists followed by their ORCID iD (people.py) and their publications.
+CREATE TABLE IF NOT EXISTS people (
+    id           INTEGER PRIMARY KEY,
+    orcid        TEXT NOT NULL UNIQUE,      -- 0000-0002-1825-0097
+    name         TEXT NOT NULL,
+    family_name  TEXT,                      -- to check OpenAlex's attributions
+    affiliation  TEXT,
+    added_at     TEXT NOT NULL,
+    last_checked TEXT,
+    last_error   TEXT
+);
+CREATE TABLE IF NOT EXISTS person_works (
+    id           INTEGER PRIMARY KEY,
+    person_id    INTEGER NOT NULL REFERENCES people(id) ON DELETE CASCADE,
+    work_key     TEXT NOT NULL,             -- 'doi:10.…', or an ORCID/OpenAlex id without a DOI
+    doi          TEXT,                      -- lower case
+    title        TEXT NOT NULL,
+    authors      TEXT NOT NULL DEFAULT '[]',
+    venue        TEXT,
+    pub_date     TEXT,                      -- '2024', '2024-05' or '2024-05-17'
+    type         TEXT,
+    url          TEXT,
+    first_seen   TEXT NOT NULL,
+    is_new       INTEGER NOT NULL DEFAULT 0, -- on the radar
+    seen_at      TEXT,                      -- looked at on the radar
+    dismissed_at TEXT,                      -- taken off the radar
+    item_id      INTEGER,                   -- added to the library (works without a DOI)
+    UNIQUE (person_id, work_key)
+);
+CREATE INDEX IF NOT EXISTS idx_person_works_new ON person_works(is_new, dismissed_at);
 """
 
 FTS_SCHEMA = """CREATE VIRTUAL TABLE IF NOT EXISTS {name} USING fts5(

@@ -69,10 +69,16 @@
         <div class="side-item" data-view="unfiled"><i data-icon="inbox"></i><span class="name">Unfiled items</span><span class="count" id="count-unfiled"></span></div>
         <div class="side-item" data-view="toread" id="side-toread" title="Papers you want to read. Drag papers here to add them.">
           <i data-icon="bookmark"></i><span class="name">Reading list</span><span class="count" id="count-toread"></span></div>
+        <div class="side-item" data-view="radar" id="side-radar" title="New publications from the people you follow">
+          <i data-icon="radar"></i><span class="name">Radar</span><span class="count" id="count-radar"></span></div>
       </div>
       <div class="side-section">
         <div class="side-head" id="collections-head" title="Drop a collection here to move it to the top level">Collections <button id="add-collection" class="mini" title="New collection" aria-label="New collection"><i data-icon="plus"></i></button></div>
         <div id="collections"></div>
+      </div>
+      <div class="side-section">
+        <div class="side-head">People <button id="add-person" class="mini" title="Follow a scientist by their ORCID iD" aria-label="Follow a scientist"><i data-icon="plus"></i></button></div>
+        <div id="people"></div>
       </div>
       <div class="side-section">
         <div class="side-head">Tags</div>
@@ -110,6 +116,7 @@
           <tbody id="items"></tbody>
         </table>
         <div id="cards" class="cards"></div>
+        <div id="works" class="works"></div>
         <div id="empty" class="empty hidden">
           <p>There are no items here.</p>
           <p class="muted">Drag PDFs onto the window, or press <b>Add</b>.</p>
@@ -165,10 +172,12 @@
 <dialog id="pv-dialog" class="dialog dialog-narrow" aria-labelledby="pv-dialog-title"></dialog>
 <dialog id="lightbox" class="lightbox" aria-labelledby="lightbox-title"></dialog>
 <dialog id="sort-sheet" class="sheet" aria-labelledby="sort-sheet-title"></dialog>
+<dialog id="follow-dialog" class="dialog dialog-narrow" aria-labelledby="follow-title"></dialog>
 <input type="file" id="attach-input" accept="application/pdf,.pdf" hidden>
 <input type="file" id="supp-input" multiple hidden>
 
 <script src="/static/app.js"></script>
+<script src="/static/people.js"></script>
 <script src="/static/paper.js"></script>
 <script type="module" src="/static/viewer.js"></script>
 </body>
