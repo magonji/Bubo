@@ -389,7 +389,7 @@ function setView(view) {
 // Narrow screens (phones): one pane at a time. The sidebar is a drawer and the
 // item pane covers the list; the back button (or the browser's) returns to it.
 // --------------------------------------------------------------------------
-const narrow = window.matchMedia("(max-width: 760px)");
+const narrow = window.matchMedia("(max-width: 760px), (hover: none) and (max-width: 1100px)");
 const TOUCH = window.matchMedia("(hover: none)").matches;
 const SEARCH_PLACEHOLDER = $("#search").placeholder;
 const fitPlaceholder = () => { $("#search").placeholder = narrow.matches ? "Search your library" : SEARCH_PLACEHOLDER; };

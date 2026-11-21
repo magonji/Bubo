@@ -33,7 +33,8 @@ them from the browser.
   Collection, the abstract, details, collections, tags, notes saved as you type and related
   papers, plus the search matches and annotations. The ⋯ menu holds the other actions, and
   **Edit details** opens the form with every field.
-- **On phones** (screens up to 760 px) the library is a gallery of figure cards or a list with
+- **On phones and tablets held upright** (screens up to 760 px, and touch screens up to
+  1100 px such as an iPad in portrait) the library is a gallery of figure cards or a list with
   thumbnails, and each paper has its own screen at `/paper/<id>`: a carousel of its figures,
   the abstract, details with a copyable DOI, collections, tags, notes saved as you type and
   related papers, with buttons to open the PDF, cite, file and share it. Papers without figures
@@ -262,7 +263,9 @@ Layout:
 - `app/static/fonts/`: Fraunces (the name, titles on phones) and Inter (the phone layout),
   both under the SIL Open Font License
 - `app/static/vendor/pdfjs/`: [PDF.js](https://github.com/mozilla/pdf.js) 6.4.299 (Apache-2.0),
-  bundled so that the server needs no external CDN
+  bundled so that the server needs no external CDN. `legacy/` holds the same version's legacy
+  build, which the viewer uses in browsers without the latest JavaScript (such as Safari on
+  iOS and iPadOS 17 and 18)
 
 Annotation rectangles are stored in PDF user-space coordinates, so they stay aligned at any zoom
 level and survive exporting.

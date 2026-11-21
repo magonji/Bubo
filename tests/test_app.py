@@ -226,6 +226,10 @@ def test_vendored_pdfjs_is_served(client):
     r = client.get("/static/vendor/pdfjs/pdf.min.mjs")
     assert r.status_code == 200 and "javascript" in r.headers["content-type"]
     assert client.get("/static/vendor/pdfjs/wasm/openjpeg.wasm").headers["content-type"] == "application/wasm"
+    # The legacy build, for browsers without the latest JavaScript (older Safari).
+    for f in ("pdf.min.mjs", "pdf.worker.min.mjs"):
+        r = client.get(f"/static/vendor/pdfjs/legacy/{f}")
+        assert r.status_code == 200 and "javascript" in r.headers["content-type"]
 
 
 def pdf_files():

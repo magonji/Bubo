@@ -1,1 +1,2 @@
 pdfjs-dist 6.4.299 (https://github.com/mozilla/pdf.js), Apache-2.0
+legacy/: the legacy build of the same version (pdfjs-dist/legacy/build), for older browsers

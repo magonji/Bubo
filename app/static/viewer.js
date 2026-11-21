@@ -1,10 +1,18 @@
 // Bubo PDF viewer: renders PDFs with PDF.js and stores highlights and notes
 // on the server (they are never written into the original PDF).
 
-import * as pdfjsLib from "/static/vendor/pdfjs/pdf.min.mjs";
+// PDF.js uses very recent JavaScript (Map.getOrInsertComputed, Math.sumPrecise…). Browsers
+// without it, such as Safari on iOS/iPadOS 17 and 18, get the "legacy" build of the same
+// version, which adds what is missing.
+const MODERN = typeof Map.prototype.getOrInsertComputed === "function" && typeof Math.sumPrecise === "function"
+  && typeof Promise.try === "function" && typeof Promise.withResolvers === "function"
+  && typeof Uint8Array.fromBase64 === "function" && typeof Uint8Array.prototype.toBase64 === "function"
+  && typeof ArrayBuffer.prototype.transferToFixedLength === "function";
+const BUILD = MODERN ? "/static/vendor/pdfjs/" : "/static/vendor/pdfjs/legacy/";
+const pdfjsLib = await import(BUILD + "pdf.min.mjs");
 
 const VENDOR = "/static/vendor/pdfjs/";
-pdfjsLib.GlobalWorkerOptions.workerSrc = VENDOR + "pdf.worker.min.mjs";
+pdfjsLib.GlobalWorkerOptions.workerSrc = BUILD + "pdf.worker.min.mjs";
 
 // Keep in sync with app/annotate.py.
 const COLOURS = {
@@ -37,7 +45,7 @@ const S = {
 };
 
 // On a phone (as in app.js): one pane at a time.
-const NARROW = window.matchMedia("(max-width: 760px)");
+const NARROW = window.matchMedia("(max-width: 760px), (hover: none) and (max-width: 1100px)");
 
 // ---------------------------------------------------------------------------
 // Opening and closing
