@@ -260,7 +260,8 @@ function personHero(p) {
       ${p.topics?.length ? `<div class="ph-topics">${p.topics.map((t) => `<span>${esc(t)}</span>`).join("")}</div>` : ""}
       <p class="ph-links muted">${links}${p.followed ? ` · checked ${ago(p.last_checked)}` : ""}${p.last_error ? ` · <span class="error">${esc(p.last_error)}</span>` : ""}
         ${p.photo_source === "wikidata" && p.photo_credit ? ` · <a href="${esc(p.photo_credit)}" target="_blank" rel="noopener">Photo: Wikimedia Commons</a>` : ""}
-        ${p.photo_url ? ` · <button type="button" class="link-btn" data-act="remove-photo">Remove photo</button>` : ""}</p>
+        ${p.photo_url ? ` · <button type="button" class="link-btn" data-act="remove-photo">Remove photo</button>` : ""}
+        · <button type="button" class="link-btn" data-act="merge" title="The same person, with their name spelt differently on some papers">Merge with…</button></p>
       <div class="works-buttons">${p.followed
         ? `<button type="button" data-act="check">${icon("refresh")} Check now</button>
            <button type="button" data-act="unfollow">Unfollow</button>`
@@ -381,6 +382,8 @@ $("#works").addEventListener("click", async (e) => {
       loadWorks();
     } else if (act === "photo") {
       choosePhoto(worksState.person);
+    } else if (act === "merge") {
+      openMergeDialog(worksState.person);
     } else if (act === "remove-photo") {
       const p = worksState.person;
       if (!confirm(`Remove ${p.name}'s photo? Bubo will not look for one on Wikidata again; you can still add one yourself.`)) return;
@@ -474,5 +477,86 @@ function openFollowAuthors(item, matches, done) {
     }
     done?.();
   });
+  dlg.showModal();
+}
+
+// --------------------------------------------------------------------------
+// Merging two people (a name misspelt on some papers)
+// --------------------------------------------------------------------------
+async function openMergeDialog(p) {
+  const dlg = $("#follow-dialog");
+  let similar = [], everyone = peopleState.all;
+  try {
+    [similar, everyone] = await Promise.all([
+      api(`/api/people/${p.id}/similar`).then((r) => r.people),
+      everyone.length ? everyone : api("/api/people?scope=all").then((r) => r.people)]);
+  } catch (err) { return toast(err.message, true); }
+  peopleState.all = everyone;
+  const row = (o) => `<button type="button" class="mg-row" data-id="${o.id}">
+      ${avatarHTML(o, "avatar-xs")}<span class="mg-name">${esc(o.name)}</span>
+      <span class="mg-meta muted">${o.papers} paper${o.papers === 1 ? "" : "s"}${o.orcid ? ` · ${esc(o.orcid)}` : ""}</span></button>`;
+
+  function chooseStep() {
+    dlg.innerHTML = `<div class="mg">
+      <h3 id="follow-title">Merge with ${esc(p.name)}</h3>
+      <p class="muted">For someone whose name is spelt differently on some papers. Their papers become ${esc(p.name)}'s,
+        and Bubo remembers the other spelling for papers you add later. The papers' author lists stay as printed.</p>
+      ${similar.length ? `<h4>Possibly the same person</h4><div class="mg-list">${similar.map(row).join("")}</div>` : ""}
+      <h4>Anyone else</h4>
+      <input type="search" id="mg-search" placeholder="Search people by name" autocomplete="off" aria-label="Search people by name">
+      <div class="mg-list" id="mg-results"></div>
+      <div class="dialog-buttons"><button type="button" data-close>Cancel</button></div></div>`;
+    const results = $("#mg-results");
+    const search = () => {
+      const q = $("#mg-search").value.trim().toLowerCase();
+      results.innerHTML = q ? everyone.filter((o) => o.id !== p.id && o.name.toLowerCase().includes(q)).slice(0, 30).map(row).join("")
+        || `<p class="muted mg-none">Nobody by that name.</p>` : "";
+    };
+    $("#mg-search").addEventListener("input", search);
+    dlg.querySelector("[data-close]").addEventListener("click", () => dlg.close());
+    dlg.querySelectorAll(".mg-list").forEach((l) => l.addEventListener("click", (e) => {
+      const b = e.target.closest(".mg-row");
+      const o = b && everyone.find((x) => x.id === Number(b.dataset.id));
+      if (o) confirmStep(o);
+    }));
+    if (!similar.length) $("#mg-search").focus();
+  }
+
+  function confirmStep(o) {
+    const names = [...new Set([p.name, o.name])];
+    dlg.innerHTML = `<form class="mg" id="mg-form">
+      <h3 id="follow-title">Merge ${esc(o.name)} into ${esc(p.name)}</h3>
+      <p class="muted">${p.papers + o.papers} papers in your library will be by one person${o.followed && !p.followed ? ", whom you follow" : ""}.</p>
+      <fieldset class="mg-names"><legend>The name to keep</legend>
+        ${names.map((n, k) => `<label><input type="radio" name="mg-name" value="${esc(n)}" ${k === 0 ? "checked" : ""}> ${esc(n)}</label>`).join("")}
+        <label><input type="radio" name="mg-name" value="" id="mg-own"> Another: <input type="text" id="mg-own-name" value="${esc(p.name)}" aria-label="Another name"></label>
+      </fieldset>
+      <p class="error" id="mg-error" role="alert"></p>
+      <div class="dialog-buttons">
+        <button type="button" data-back>Back</button>
+        <button type="submit" class="primary" id="mg-submit">Merge</button>
+      </div></form>`;
+    $("#mg-own-name").addEventListener("focus", () => { $("#mg-own").checked = true; });
+    dlg.querySelector("[data-back]").addEventListener("click", chooseStep);
+    $("#mg-form").addEventListener("submit", async (e) => {
+      e.preventDefault();
+      const picked = dlg.querySelector("input[name=mg-name]:checked").value || $("#mg-own-name").value.trim();
+      if (!picked) { $("#mg-error").textContent = "Write the name to keep."; return; }
+      $("#mg-submit").disabled = true;
+      try {
+        const r = await api(`/api/people/${p.id}/merge`, { json: { other_id: o.id, name: picked } });
+        dlg.close();
+        toast(`Merged: ${r.papers} paper${r.papers === 1 ? "" : "s"} by ${r.name}`);
+        peopleState.all = [];
+        await loadSidebar();
+        setView({ type: "person", id: r.id, name: r.name });
+      } catch (err) {
+        $("#mg-error").textContent = err.message;
+        $("#mg-submit").disabled = false;
+      }
+    });
+  }
+
+  chooseStep();
   dlg.showModal();
 }

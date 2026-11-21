@@ -1248,3 +1248,46 @@ def test_authors_photos_come_from_wikidata_in_batches(client, monkeypatch):
     assert people.find_photos(conn) == 0 and len(calls) == n       # not asked again for a while
     conn.close()
     client.delete(f"/api/items/{item['id']}?permanent=true")
+
+
+def test_merging_people_whose_names_are_misspelt(client):
+    import io
+    from PIL import Image
+    from app import db
+    login(client)
+    one = client.post("/api/items", json={"title": "One", "authors": [{"given": "Mario", "family": "González-Jiménez"}]}).json()
+    two = client.post("/api/items", json={"title": "Two", "authors": [{"given": "M.", "family": "Gonzales-Jimenez"},
+                                                                    {"given": "Ana", "family": "Other"}]}).json()
+    good = client.get(f"/api/items/{one['id']}/people").json()["authors"][0]["id"]
+    bad = client.get(f"/api/items/{two['id']}/people").json()["authors"][0]["id"]
+    assert good != bad
+    # Bubo suggests the misspelt one, not someone else.
+    assert [p["id"] for p in client.get(f"/api/people/{good}/similar").json()["people"]] == [bad]
+    # The misspelt one has a photo and an iD; merged, the person keeps both, and the name chosen.
+    buf = io.BytesIO(); Image.new("RGB", (60, 80), "olive").save(buf, "PNG")
+    client.post(f"/api/people/{bad}/photo", files={"file": ("p.png", buf.getvalue(), "image/png")})
+    conn = db.connect()
+    conn.execute("UPDATE people SET orcid = '0000-0002-1825-0097' WHERE id = ?", (bad,))
+    conn.commit()
+    p = client.post(f"/api/people/{good}/merge", json={"other_id": bad, "name": "Mario González-Jiménez"}).json()
+    assert p["id"] == good and p["papers"] == 2 and p["orcid"] == "0000-0002-1825-0097" and p["photo_url"]
+    assert p["name"] == "Mario González-Jiménez"
+    assert client.get(f"/api/people/{bad}").status_code == 404
+    # The papers keep their author lists as printed.
+    assert client.get(f"/api/items/{two['id']}").json()["authors"][0]["family"] == "Gonzales-Jimenez"
+    # A later paper with the misspelt name, or the paper edited, is the merged person's.
+    three = client.post("/api/items", json={"title": "Three", "authors": [{"given": "M.", "family": "Gonzales-Jimenez"}]}).json()
+    assert client.get(f"/api/items/{three['id']}/people").json()["authors"][0]["id"] == good
+    client.put(f"/api/items/{two['id']}", json={"authors": [{"given": "M.", "family": "Gonzales-Jimenez"}]})
+    assert client.get(f"/api/items/{two['id']}/people").json()["authors"][0]["id"] == good
+    assert client.get(f"/api/people/{good}").json()["name"] == "Mario González-Jiménez"     # the name stays
+    # Two people with different iDs are not merged.
+    ana = client.get(f"/api/items/{one['id']}/people").json()["authors"]
+    other = next(a for a in client.get("/api/people", params={"scope": "all"}).json()["people"] if a["name"] == "Ana Other")
+    conn.execute("UPDATE people SET orcid = '0000-0001-5109-3700' WHERE id = ?", (other["id"],))
+    conn.commit()
+    conn.close()
+    r = client.post(f"/api/people/{good}/merge", json={"other_id": other["id"]})
+    assert r.status_code == 409 and "different ORCID" in r.json()["detail"]
+    for i in (one, two, three):
+        client.delete(f"/api/items/{i['id']}?permanent=true")

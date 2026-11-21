@@ -128,6 +128,11 @@ CREATE TABLE IF NOT EXISTS item_authors (
     PRIMARY KEY (item_id, pos)
 );
 CREATE INDEX IF NOT EXISTS idx_item_authors_person ON item_authors(person_id);
+-- Names merged into a person by hand (authors.merge): papers by them are that person's.
+CREATE TABLE IF NOT EXISTS person_aliases (
+    name_key  TEXT PRIMARY KEY,
+    person_id INTEGER NOT NULL REFERENCES people(id) ON DELETE CASCADE
+);
 CREATE TABLE IF NOT EXISTS person_works (
     id           INTEGER PRIMARY KEY,
     person_id    INTEGER NOT NULL REFERENCES people(id) ON DELETE CASCADE,
@@ -211,7 +216,7 @@ def init_db() -> None:
     people_columns = {r["name"] for r in conn.execute("PRAGMA table_info(people)")}
     for column in ["family_name", "name_key", "followed INTEGER NOT NULL DEFAULT 0", "country", "role", "openalex_id", "works_count INTEGER", "cited_by INTEGER",
                    "h_index INTEGER", "topics", "wikidata_id", "description", "wikipedia", "photo",
-                   "photo_source", "photo_credit", "profile_checked", "photo_looked"]:
+                   "photo_source", "photo_credit", "profile_checked", "photo_looked", "name_fixed INTEGER"]:
         name, _, kind = column.partition(" ")
         if name not in people_columns:
             conn.execute(f"ALTER TABLE people ADD COLUMN {name} {kind or 'TEXT'}")

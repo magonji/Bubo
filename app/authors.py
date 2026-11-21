@@ -75,10 +75,18 @@ def _person_for(conn, a: dict) -> int | None:
     name = full_name(a)
     if not key and not orcid:
         return None
+    alias = conn.execute("SELECT a.person_id, p.orcid FROM person_aliases a JOIN people p ON p.id = a.person_id "
+                         "WHERE a.name_key = ?", (key,)).fetchone() if key else None
     if orcid:
         row = conn.execute("SELECT id FROM people WHERE orcid = ?", (orcid,)).fetchone()
         if row:
             return row["id"]
+        if alias and not alias["orcid"]:      # a name merged by hand into someone without an iD
+            conn.execute("UPDATE people SET orcid = ? WHERE id = ?", (orcid, alias["person_id"]))
+            return alias["person_id"]
+    elif alias:
+        return alias["person_id"]
+    if orcid:
         # Someone known so far only by name becomes the person with this iD.
         row = conn.execute("SELECT id FROM people WHERE orcid IS NULL AND name_key = ? "
                            "ORDER BY followed DESC, id LIMIT 1", (key,)).fetchone() if key else None
@@ -104,8 +112,8 @@ def _better_name(conn, person_id: int, a: dict) -> None:
     """Keep the fullest form of a name seen ("Mario" rather than "M.") for people known only
     from papers (the name of someone followed comes from ORCID)."""
     name = full_name(a)
-    row = conn.execute("SELECT name, followed FROM people WHERE id = ?", (person_id,)).fetchone()
-    if row and not row["followed"] and len(name) > len(row["name"] or ""):
+    row = conn.execute("SELECT name, followed, name_fixed FROM people WHERE id = ?", (person_id,)).fetchone()
+    if row and not row["followed"] and not row["name_fixed"] and len(name) > len(row["name"] or ""):
         conn.execute("UPDATE people SET name = ? WHERE id = ?", (name, person_id))
 
 
@@ -164,6 +172,101 @@ def keep_orcids(old: list[dict], new: list[dict]) -> list[dict]:
             if orcid:
                 a["orcid"] = orcid
     return new
+
+
+# --------------------------------------------------------------------------- #
+# Merging people (names misspelt on some papers)
+# --------------------------------------------------------------------------- #
+
+class MergeError(Exception):
+    pass
+
+
+PROFILE_COLUMNS = ["affiliation", "country", "role", "openalex_id", "works_count", "cited_by", "h_index", "topics",
+                   "wikidata_id", "description", "wikipedia", "profile_checked"]
+
+
+def merge(conn, keep_id: int, other_id: int, name: str | None = None) -> None:
+    """Make other_id the same person as keep_id: their papers, iD, photo, profile and (if
+    either was followed) publications go to keep_id, and other_id goes. The names of
+    other_id's papers are remembered, so later papers with them are keep_id's too."""
+    keep = conn.execute("SELECT * FROM people WHERE id = ?", (keep_id,)).fetchone()
+    other = conn.execute("SELECT * FROM people WHERE id = ?", (other_id,)).fetchone()
+    if not keep or not other or keep_id == other_id:
+        raise MergeError("Choose two different people")
+    if keep["orcid"] and other["orcid"] and keep["orcid"] != other["orcid"]:
+        raise MergeError("They have different ORCID iDs, so they are different people")
+    # Remember every form of the other person's name.
+    keys = {other["name_key"]} | {
+        name_key(a.get("given"), a.get("family"))
+        for r in conn.execute("SELECT i.authors, a.pos FROM item_authors a JOIN items i ON i.id = a.item_id "
+                              "WHERE a.person_id = ?", (other_id,))
+        for n, a in enumerate(json.loads(r["authors"] or "[]")) if n == r["pos"]}
+    keys.discard(None)
+    keys.discard(keep["name_key"])
+    # Papers, and publications if either was followed.
+    conn.execute("UPDATE OR IGNORE item_authors SET person_id = ? WHERE person_id = ?", (keep_id, other_id))
+    conn.execute("DELETE FROM item_authors WHERE person_id = ?", (other_id,))
+    conn.execute("UPDATE OR IGNORE person_works SET person_id = ? WHERE person_id = ?", (keep_id, other_id))
+    conn.execute("DELETE FROM person_works WHERE person_id = ?", (other_id,))
+    conn.execute("UPDATE person_aliases SET person_id = ? WHERE person_id = ?", (keep_id, other_id))
+    # Details keep_id lacks; a photo, moved to its new name.
+    sets = {c: other[c] for c in PROFILE_COLUMNS if keep[c] in (None, "", "[]") and other[c] not in (None, "", "[]")}
+    if not keep["photo"] and other["photo"]:
+        src = people.photo_dir() / other["photo"]
+        if src.exists():
+            src.replace(people.photo_dir() / f"{keep_id}.webp")
+            sets.update(photo=f"{keep_id}.webp", photo_source=other["photo_source"], photo_credit=other["photo_credit"])
+    people.delete_photo(other_id) if other["photo"] and keep["photo"] else None
+    orcid = keep["orcid"] or other["orcid"]
+    followed = int(bool(keep["followed"] or other["followed"]))
+    conn.execute("DELETE FROM people WHERE id = ?", (other_id,))      # before taking its iD (unique)
+    if name and name.strip():
+        given, _, family = name.strip().rpartition(" ")
+        sets.update(name=name.strip(), family_name=family or name.strip(), name_key=name_key(given, family or name), name_fixed=1)
+        if keep["name_key"] and keep["name_key"] != sets["name_key"]:
+            keys.add(keep["name_key"])
+    sets.update(orcid=orcid, followed=followed)
+    conn.execute(f"UPDATE people SET {', '.join(f'{k} = ?' for k in sets)} WHERE id = ?", (*sets.values(), keep_id))
+    new_key = conn.execute("SELECT name_key FROM people WHERE id = ?", (keep_id,)).fetchone()["name_key"]
+    for k in keys - {new_key}:
+        conn.execute("INSERT INTO person_aliases (name_key, person_id) VALUES (?, ?) "
+                     "ON CONFLICT(name_key) DO UPDATE SET person_id = excluded.person_id", (k, keep_id))
+    conn.commit()
+
+
+def _similar(a: str, b: str) -> float:
+    from difflib import SequenceMatcher
+    return SequenceMatcher(None, a, b).ratio()
+
+
+def similar_people(conn, person_id: int, limit: int = 8) -> list[int]:
+    """People who may be the same as this one, with their name spelt differently: the same
+    first initial and a family name that is nearly the same (or the same, with a different
+    first name), and no other ORCID iD."""
+    me = conn.execute("SELECT name, family_name, name_key, orcid FROM people WHERE id = ?", (person_id,)).fetchone()
+    if not me or not me["name_key"]:
+        return []
+    fam, init = me["name_key"].split("|")
+    given = people._plain(me["name"][: -len(me["family_name"] or "")] if me["family_name"] else "")
+    scored = []
+    for r in conn.execute("SELECT id, name, family_name, name_key, orcid FROM people WHERE id != ? AND name_key IS NOT NULL",
+                          (person_id,)):
+        if me["orcid"] and r["orcid"] and r["orcid"] != me["orcid"]:
+            continue
+        f, i = r["name_key"].split("|")
+        if i and init and i != init:
+            continue
+        score = _similar(fam, f)
+        if f == fam:
+            other_given = people._plain(r["name"][: -len(r["family_name"] or "")] if r["family_name"] else "")
+            score = 0.9 if given and other_given and _similar(given, other_given) > 0.6 else 0.85
+        elif len(fam) > 3 and len(f) > 3 and (fam in f or f in fam):
+            score = max(score, 0.88)       # "Garcia" / "Garcialopez"
+        if score >= 0.82:
+            scored.append((score, r["id"]))
+    scored.sort(reverse=True)
+    return [pid for _, pid in scored[:limit]]
 
 
 # --------------------------------------------------------------------------- #

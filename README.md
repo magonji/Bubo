@@ -66,6 +66,11 @@ them from the browser.
   else you can add one yourself (the camera button), or Bubo shows their initials.
   On a paper's sheet every author links to their page, authors with a photo appear with it,
   and the people you follow stand out.
+- **Merge people** whose name is spelt differently on some papers (**Merge with…** on a
+  person's page, which suggests likely duplicates): their papers, ORCID iD, photo and follow
+  become one person's, under the name you choose, and Bubo remembers the other spelling for
+  papers you add later. The papers' author lists stay as printed. People with different ORCID
+  iDs cannot be merged.
 - **Journals** gathers the journals your papers were published in as a shelf of covers, each
   made from the figures of your latest papers in it. A journal's page lists your papers in it
   under its publisher, h-index, citations per article and open-access status (from OpenAlex,

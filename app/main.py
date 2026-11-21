@@ -672,6 +672,31 @@ def unfollow_person(person_id: int, conn: Conn):
     return {"ok": True}
 
 
+class MergeIn(BaseModel):
+    other_id: int
+    name: str | None = Field(default=None, max_length=300)    # the name to keep
+
+
+@app.post("/api/people/{person_id}/merge", dependencies=[Auth])
+def merge_people(person_id: int, body: MergeIn, conn: Conn):
+    """Merge someone into this person (the same person, with their name spelt differently)."""
+    _person_or_404(conn, person_id)
+    _person_or_404(conn, body.other_id)
+    try:
+        authors.merge(conn, person_id, body.other_id, body.name)
+    except authors.MergeError as e:
+        raise HTTPException(409, str(e))
+    return _person_or_404(conn, person_id)
+
+
+@app.get("/api/people/{person_id}/similar", dependencies=[Auth])
+def similar_people(person_id: int, conn: Conn):
+    """People who may be this one with their name spelt differently."""
+    _person_or_404(conn, person_id)
+    everyone = {p["id"]: p for p in people.list_people(conn, "all")}
+    return {"people": [everyone[i] for i in authors.similar_people(conn, person_id) if i in everyone]}
+
+
 @app.post("/api/people/{person_id}/profile", dependencies=[Auth])
 def person_profile(person_id: int, conn: Conn, force: bool = False):
     """Look up someone's profile (position, citations, photo) if it is a week old or more:
