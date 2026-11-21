@@ -27,7 +27,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 import pymupdf
-from PIL import Image
+from PIL import Image, ImageFilter
 
 from . import db, storage
 from .config import settings
@@ -252,6 +252,27 @@ def render(page, rect: pymupdf.Rect) -> Image.Image:
     return Image.frombytes("RGB", (pix.width, pix.height), pix.samples)
 
 
+def analyse(img: Image.Image) -> tuple[tuple[int, int, int, int], bool]:
+    """The figure without its white margins (a box), and whether it is a photograph.
+
+    Photographs and micrographs may fill their tile in the library, cropped at the edges;
+    charts and diagrams are always shown whole. A photograph has little white and texture
+    almost everywhere, where charts and diagrams (heatmaps too) are mostly flat colour."""
+    rgb = img.convert("RGB")
+    box = rgb.convert("L").point(lambda v: 255 if v < 244 else 0).getbbox() or (0, 0, rgb.width, rgb.height)
+    small = rgb.crop(box)
+    small.thumbnail((240, 240))
+    px = small.get_flattened_data()
+    white = sum(1 for r, g, b in px if r > 232 and g > 232 and b > 232) / len(px)
+    edges = small.convert("L").filter(ImageFilter.FIND_EDGES).get_flattened_data()
+    flat = sum(1 for e in edges if e < 6) / len(edges)
+    photo = white < 0.3 and flat < 0.7
+    if not photo:   # charts keep a little white around them
+        pad = round(0.02 * max(box[2] - box[0], box[3] - box[1]))
+        box = (max(0, box[0] - pad), max(0, box[1] - pad), min(rgb.width, box[2] + pad), min(rgb.height, box[3] + pad))
+    return box, photo
+
+
 def _save(img: Image.Image, path: Path, size: str) -> tuple[int, int]:
     w = SIZES[size]
     if img.width > w:
@@ -304,13 +325,15 @@ def extract_item(conn, item_id: int, force: bool = False) -> int | None:
     with pymupdf.open(stream=data, filetype="pdf") as doc:
         for idx, f in enumerate(find_figures(doc)):
             img = render(doc[f.page], f.rect)
+            box, fill = analyse(img)
+            img = img.crop(box)
             fw, fh = _save(img, out / f"{idx}-full.webp", "full")
             tw, th = _save(img, out / f"{idx}-thumb.webp", "thumb")
-            rows.append((item_id, pdf_hash, idx, f.page, f.kind, f.label, f.caption, fw, fh, tw, th))
+            rows.append((item_id, pdf_hash, idx, f.page, f.kind, f.label, f.caption, fw, fh, tw, th, int(fill)))
     conn.execute("DELETE FROM figures WHERE item_id = ?", (item_id,))
     conn.executemany(
         "INSERT INTO figures (item_id, pdf_hash, idx, page, kind, label, caption, width, height, "
-        "thumb_width, thumb_height) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)", rows)
+        "thumb_width, thumb_height, fill) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)", rows)
     conn.execute("UPDATE items SET figures_hash = ?, figures_status = ?, figures_version = ?, "
                  "cover_figure_id = NULL WHERE id = ?", (pdf_hash, "done" if rows else "none", VERSION, item_id))
     conn.commit()
@@ -327,7 +350,7 @@ def as_dict(r) -> dict:
         "id": r["id"], "index": r["idx"], "page": r["page"] + 1, "kind": r["kind"],
         "label": r["label"] or "", "caption": r["caption"] or "",
         "width": r["width"], "height": r["height"],
-        "thumb_width": r["thumb_width"], "thumb_height": r["thumb_height"],
+        "thumb_width": r["thumb_width"], "thumb_height": r["thumb_height"], "fill": bool(r["fill"]),
         "thumb": f"/api/figures/{r['id']}/thumb.webp?v={v}",
         "full": f"/api/figures/{r['id']}/full.webp?v={v}",
     }
@@ -376,3 +399,50 @@ def wait() -> None:
     for f in pending:
         f.result()
 
+
+
+# --------------------------------------------------------------------------- #
+# Figures extracted before analyse(): trim and classify their saved thumbnails
+# --------------------------------------------------------------------------- #
+
+def analyse_saved(conn) -> int:
+    """Trim the white margins of old thumbnails and say which are photographs (once)."""
+    done = 0
+    for r in conn.execute("SELECT id, item_id, pdf_hash, idx FROM figures WHERE fill IS NULL").fetchall():
+        path = file_path(r["item_id"], r["pdf_hash"], r["idx"], "thumb")
+        fill, size = 0, None
+        try:
+            with Image.open(path) as im:
+                im.load()
+                box, photo = analyse(im)
+                fill = int(photo)
+                if box != (0, 0, im.width, im.height):
+                    trimmed = im.convert("RGB").crop(box)
+                    trimmed.save(path, "WEBP", quality=QUALITY["thumb"], method=4)
+                    size = trimmed.size
+        except (OSError, ValueError) as e:
+            log.warning("Could not look at figure %s: %s", r["id"], e)
+        if size:
+            conn.execute("UPDATE figures SET fill = ?, thumb_width = ?, thumb_height = ? WHERE id = ?",
+                         (fill, size[0], size[1], r["id"]))
+        else:
+            conn.execute("UPDATE figures SET fill = ? WHERE id = ?", (fill, r["id"]))
+        conn.commit()
+        done += 1
+    return done
+
+
+def start_analysing_saved() -> None:
+    """Run analyse_saved in the background, in the figures thread (at startup)."""
+    def run():
+        conn = db.connect()
+        try:
+            n = analyse_saved(conn)
+            if n:
+                log.info("Looked at %s saved figures", n)
+        except Exception:
+            log.exception("Could not look at the saved figures")
+        finally:
+            conn.close()
+    with _lock:
+        _pending.append(_executor.submit(run))

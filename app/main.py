@@ -47,6 +47,8 @@ storage.sync_all(_startup_conn)
 settings.contact_email = db.get_settings(_startup_conn).get("contact_email") or settings.env_contact_email
 # Look for new publications by followed people every few hours (people.py).
 people.start_radar()
+# Trim and classify figures extracted by earlier versions (figures.py).
+figures.start_analysing_saved()
 _startup_conn.close()
 
 Conn = Annotated[object, Depends(db.get_db)]

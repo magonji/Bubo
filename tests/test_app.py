@@ -1053,3 +1053,33 @@ def test_journals_gallery_and_profile(client, monkeypatch):
     assert client.get("/api/journals").json()["journals"][1]["publisher"] == "Owl Press"
     for i in made:
         client.delete(f"/api/items/{i['id']}")
+
+
+def test_photographs_fill_their_tile_and_margins_are_trimmed():
+    import random
+    from PIL import Image, ImageDraw, ImageFilter
+    from app import figures
+    random.seed(3)
+    tex = Image.new("L", (300, 200), 90)
+    d = ImageDraw.Draw(tex)
+    for _ in range(50):
+        x, y, r = random.randint(0, 300), random.randint(0, 200), random.randint(5, 25)
+        d.ellipse([x - r, y - r, x + r, y + r], fill=random.randint(60, 230))
+    tex = tex.filter(ImageFilter.GaussianBlur(2))
+    tex.putdata([max(0, min(255, v + random.randint(-25, 25))) for v in tex.get_flattened_data()])
+    photo = Image.new("RGB", (400, 300), "white")
+    photo.paste(tex.convert("RGB"), (50, 50))                 # a micrograph with white margins
+    box, fill = figures.analyse(photo)
+    assert fill and box == (50, 50, 350, 250)                  # cropped flush
+    plot = Image.new("RGB", (400, 300), "white")
+    d = ImageDraw.Draw(plot)
+    d.line([(40, 260), (380, 260)], fill="black", width=2)
+    d.line([(40, 20), (40, 260)], fill="black", width=2)
+    d.line([(40 + x, 140 - 60 * ((x / 40) % 2)) for x in range(0, 340, 20)], fill=(31, 119, 180), width=3)
+    assert figures.analyse(plot)[1] is False
+    heat = Image.new("RGB", (400, 300), "white")
+    d = ImageDraw.Draw(heat)
+    for i in range(10):
+        for j in range(8):
+            d.rectangle([60 + i * 30, 20 + j * 30, 89 + i * 30, 49 + j * 30], fill=(255 - i * 20, 255 - j * 25, 200))
+    assert figures.analyse(heat)[1] is False                 # flat blocks of colour: a diagram

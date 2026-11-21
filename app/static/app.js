@@ -604,7 +604,7 @@ function journalHue(name) {
 
 function thumbHTML(i) {
   if (i.cover) {
-    return `<div class="tile"><img src="${esc(i.cover.url)}" alt="" loading="lazy" decoding="async"
+    return `<div class="tile${i.cover.fill ? " tile-fill" : ""}"><img src="${esc(i.cover.url)}" alt="" loading="lazy" decoding="async"
       width="${i.cover.width}" height="${i.cover.height}"></div>`;
   }
   const venue = [i.venue, i.year].filter(Boolean).join(" · ");

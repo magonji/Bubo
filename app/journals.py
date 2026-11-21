@@ -29,8 +29,8 @@ def list_journals(conn) -> list[dict]:
     """Every venue in the library, with its papers counted and figures for its cover."""
     rows = conn.execute(
         "SELECT i.id, i.venue, i.venue_short, i.publisher, i.year, i.added_at, i.to_read_at, "
-        "COALESCE((SELECT f.id || ':' || f.pdf_hash FROM figures f WHERE f.id = i.cover_figure_id AND f.item_id = i.id), "
-        " (SELECT f.id || ':' || f.pdf_hash FROM figures f WHERE f.item_id = i.id ORDER BY f.idx LIMIT 1)) AS cover "
+        "COALESCE((SELECT f.id || ':' || f.pdf_hash || ':' || IFNULL(f.fill, 0) FROM figures f WHERE f.id = i.cover_figure_id AND f.item_id = i.id), "
+        " (SELECT f.id || ':' || f.pdf_hash || ':' || IFNULL(f.fill, 0) FROM figures f WHERE f.item_id = i.id ORDER BY f.idx LIMIT 1)) AS cover "
         "FROM items i WHERE i.venue IS NOT NULL AND trim(i.venue) != '' "
         "ORDER BY i.year DESC NULLS LAST, i.added_at DESC").fetchall()
     groups: dict[str, dict] = {}
@@ -49,8 +49,8 @@ def list_journals(conn) -> list[dict]:
             g["years"].append(r["year"])
         g["last_added"] = max(g["last_added"], r["added_at"])
         if r["cover"] and len(g["covers"]) < COVERS:
-            fid, h = r["cover"].split(":", 1)
-            g["covers"].append(f"/api/figures/{fid}/thumb.webp?v={h[:8]}")
+            fid, h, fill = r["cover"].split(":")
+            g["covers"].append({"url": f"/api/figures/{fid}/thumb.webp?v={h[:8]}", "fill": fill == "1"})
     profiles = {r["key"]: json.loads(r["data"]) for r in conn.execute("SELECT key, data FROM journals")}
     out = []
     for k, g in groups.items():

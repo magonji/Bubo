@@ -20,8 +20,8 @@ function journalCoverHTML(j, cls = "") {
       <span class="jc-name">${esc(j.name)}</span>${j.short && j.short !== j.name ? `<span class="jc-short">${esc(j.short)}</span>` : ""}</span>`;
   }
   return `<span class="j-cover ${cls}" style="--h:${h};--k:${Math.min(1, 11 / longest(j.short || j.name)).toFixed(2)}" aria-hidden="true">${mast}
-    <span class="jc-figs jc-n${Math.min(figs.length, 4)}">${figs.slice(0, 4).map((u) =>
-      `<span class="jc-fig"><img src="${esc(u)}" alt="" loading="lazy" decoding="async"></span>`).join("")}</span></span>`;
+    <span class="jc-figs jc-n${Math.min(figs.length, 4)}">${figs.slice(0, 4).map((f) =>
+      `<span class="jc-fig${f.fill ? " jc-fill" : ""}"><img src="${esc(f.url)}" alt="" loading="lazy" decoding="async"></span>`).join("")}</span></span>`;
 }
 
 // --------------------------------------------------------------------------

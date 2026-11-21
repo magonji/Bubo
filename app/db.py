@@ -194,6 +194,9 @@ def init_db() -> None:
     conn.executescript(SCHEMA)
     conn.execute(FTS_SCHEMA.format(name="items_fts"))
     fts_columns = {r["name"] for r in conn.execute("PRAGMA table_info(items_fts)")}
+    # Whether a figure is a photograph that may fill its tile (figures.analyse; NULL: not looked at).
+    if "fill" not in {r["name"] for r in conn.execute("PRAGMA table_info(figures)")}:
+        conn.execute("ALTER TABLE figures ADD COLUMN fill INTEGER")
     # Profiles of followed people (people.py), added after the table itself.
     people_columns = {r["name"] for r in conn.execute("PRAGMA table_info(people)")}
     for column in ["family_name", "country", "role", "openalex_id", "works_count INTEGER", "cited_by INTEGER",
@@ -302,7 +305,7 @@ def _row_to_item(row: sqlite3.Row, tags: list[str], collections: list[int],
     cover = next((f for f in figures if f["id"] == item["cover_figure_id"]), figures[0] if figures else None)
     item["figure_count"] = len(figures)
     item["cover"] = cover and {
-        "id": cover["id"], "width": cover["thumb_width"], "height": cover["thumb_height"],
+        "id": cover["id"], "width": cover["thumb_width"], "height": cover["thumb_height"], "fill": bool(cover["fill"]),
         "url": f"/api/figures/{cover['id']}/thumb.webp?v={cover['pdf_hash'][:8]}",
     }
     return item
@@ -333,7 +336,7 @@ def _relations(conn, ids: list[int]) -> tuple[dict, dict, dict, dict]:
             "file_path": r["file_name"] if storage.is_in_place(r["file_name"]) else None,
         })
     for r in conn.execute(
-        f"SELECT id, item_id, pdf_hash, thumb_width, thumb_height FROM figures "
+        f"SELECT id, item_id, pdf_hash, thumb_width, thumb_height, fill FROM figures "
         f"WHERE item_id IN ({marks}) ORDER BY idx", ids):
         figs[r["item_id"]].append(r)
     return tags, cols, supp, figs
