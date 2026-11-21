@@ -70,6 +70,10 @@ them from the browser.
   under its publisher, h-index, citations per article and open-access status (from OpenAlex,
   looked up when you open the page and kept for 30 days). The journal on a paper's sheet
   links to it.
+- **Trash**: deleted papers go to the trash (with an **Undo** button), keeping their PDF, notes,
+  annotations and figures. From there you can restore them, delete them for good, or empty the
+  trash; papers in it for more than 30 days are deleted for good. Adding a paper that is in
+  the trash brings it back.
 - **Find PDF** for papers without one (the dimmed icon in the PDF column, or the button in the
   item pane): looks on arXiv, Unpaywall (with `BUBO_CONTACT_EMAIL` set) and the publisher's page.
 - **The order you choose** (by year, date added, title or author) is remembered between visits.

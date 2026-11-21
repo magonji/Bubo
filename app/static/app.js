@@ -123,6 +123,47 @@ function toast(msg, err = false, ms = 4000) {
   return el;
 }
 
+// A message with an Undo button (for papers moved to the trash).
+function toastUndo(msg, undo) {
+  const el = toast(msg, false, 7000);
+  const btn = document.createElement("button");
+  btn.type = "button";
+  btn.className = "toast-undo";
+  btn.textContent = "Undo";
+  btn.addEventListener("click", async () => { el.remove(); await undo(); });
+  el.appendChild(btn);
+}
+
+async function trashItems(ids) {
+  await Promise.all(ids.map((id) => api(`/api/items/${id}`, { method: "DELETE" })));
+  state.selected = null;
+  state.selectedIds = new Set();
+  refresh();
+  toastUndo(ids.length === 1 ? "Moved to the trash" : `${ids.length} papers moved to the trash`, async () => {
+    await Promise.all(ids.map((id) => api(`/api/items/${id}/restore`, { method: "POST" })));
+    toast(ids.length === 1 ? "Paper restored" : `${ids.length} papers restored`);
+    refresh();
+  });
+}
+
+async function restoreItems(ids) {
+  await Promise.all(ids.map((id) => api(`/api/items/${id}/restore`, { method: "POST" })));
+  state.selected = null;
+  state.selectedIds = new Set();
+  toast(ids.length === 1 ? "Paper restored to your library" : `${ids.length} papers restored to your library`);
+  refresh();
+}
+
+async function purgeItems(ids, titles) {
+  if (!confirm(ids.length === 1 ? `Delete “${titles[0] || "this paper"}” for good, with its PDF, notes and annotations? This cannot be undone.`
+    : `Delete ${ids.length} papers for good, with their PDFs, notes and annotations? This cannot be undone.`)) return;
+  await Promise.all(ids.map((id) => api(`/api/items/${id}?permanent=true`, { method: "DELETE" })));
+  state.selected = null;
+  state.selectedIds = new Set();
+  toast(ids.length === 1 ? "Deleted for good" : `${ids.length} papers deleted for good`);
+  refresh();
+}
+
 // --------------------------------------------------------------------------
 // Login
 // --------------------------------------------------------------------------
@@ -176,9 +217,11 @@ async function loadItems() {
   if (state.view.type === "toread") p.set("to_read", "true");
   if (state.view.type === "tag") p.set("tag", state.view.name);
   if (state.view.type === "journal") { p.set("venue", state.view.name); await ensureJournalsList(); }
+  if (state.view.type === "trash") p.set("trash", "true");
   state.items = await api("/api/items?" + p);
   renderItems();
   renderJournalHero();
+  renderTrashHead();
 }
 
 async function refresh() {
@@ -209,6 +252,7 @@ function renderSidebar() {
   $("#count-unfiled").textContent = counts.unfiled || "";
   $("#count-toread").textContent = counts.to_read || "";
   $("#count-journals").textContent = counts.journals || "";
+  $("#count-trash").textContent = counts.trash || "";
 
   const byParent = {};
   for (const c of state.collections) (byParent[c.parent_id ?? "root"] ||= []).push(c);
@@ -470,7 +514,7 @@ function sectionTitle() {
   const v = state.view;
   return { all: "My library", unfiled: "Unfiled items", toread: "Reading list",
     collection: v.name, tag: `Tag: ${v.name}`, radar: "Radar", person: v.name, people: "People",
-    journals: "Journals", journal: v.name }[v.type];
+    journals: "Journals", journal: v.name, trash: "Trash" }[v.type];
 }
 function viewTitle() {
   return state.q ? `${sectionTitle()} — “${state.q}”` : sectionTitle();
@@ -1024,7 +1068,7 @@ function renderEditForm(item) {
         ["cite", "quote", "Copy citation"],
         ["bib", "braces", "Copy BibTeX"],
         (item.doi || item.arxiv_id) && ["refresh", "refresh", "Refresh metadata"],
-        ["delete", "trash", "Delete", "danger"],
+        item.deleted_at ? ["delete", "trash", "Delete for good", "danger"] : ["delete", "trash", "Move to the trash", "danger"],
       ].filter(Boolean).map(([a, ic, label, cls = ""]) =>
         `<button type="button" class="icon-btn ${cls}" data-a="${a}" data-tip="${label}" aria-label="${label}">${icon(ic)}</button>`).join("")}
     </div>
@@ -1168,7 +1212,10 @@ function renderMulti() {
         collectionSelectOptions(null).replace("No collection", "Choose a collection…")}</select>
         <button type="button" data-bulk="collect">${icon("folder")} Add</button></div>` : ""}
       <button type="button" data-bulk="export">${icon("download")} Export to BibTeX</button>
-      <button type="button" data-bulk="delete" class="danger">${icon("trash")} Delete ${ids.length} papers</button>
+      ${state.view.type === "trash"
+        ? `<button type="button" data-bulk="restore">${icon("refresh")} Restore ${ids.length} papers</button>
+           <button type="button" data-bulk="delete" class="danger">${icon("trash")} Delete ${ids.length} for good</button>`
+        : `<button type="button" data-bulk="delete" class="danger">${icon("trash")} Move ${ids.length} papers to the trash</button>`}
     </div>
     <ul class="muted" style="padding-left:18px;font-size:12.5px">${items.slice(0, 12).map((i) =>
       `<li>${esc(i.title) || "(untitled)"}</li>`).join("")}${items.length > 12 ? `<li>…and ${items.length - 12} more</li>` : ""}</ul>
@@ -1185,13 +1232,10 @@ function renderMulti() {
         toast(`Added ${ids.length} papers to “${state.collections.find((c) => c.id === cid)?.name}”`);
         refresh();
       } else if (action === "export") exportBibtex(ids);
+      else if (action === "restore") await restoreItems(ids);
       else if (action === "delete") {
-        if (!confirm(`Delete ${ids.length} papers and their PDFs? This cannot be undone.`)) return;
-        await Promise.all(ids.map((id) => api(`/api/items/${id}`, { method: "DELETE" })));
-        state.selectedIds = new Set();
-        state.selected = null;
-        toast(`Deleted ${ids.length} papers`);
-        refresh();
+        if (state.view.type === "trash") await purgeItems(ids, []);
+        else await trashItems(ids);
       }
     } catch (err) { toast(err.message, true); }
   });
@@ -1237,11 +1281,10 @@ async function itemAction(action, item) {
     } else if (action === "refresh") {
       await refreshMetadata(item);
     } else if (action === "delete") {
-      if (!confirm(`Delete “${item.title || "this item"}”${item.has_file ? " and its PDF" : ""}? This cannot be undone.`)) return;
-      await api(`/api/items/${item.id}`, { method: "DELETE" });
-      state.selected = null;
-      state.selectedIds = new Set();
-      refresh();
+      if (item.deleted_at) await purgeItems([item.id], [item.title]);
+      else await trashItems([item.id]);
+    } else if (action === "restore") {
+      await restoreItems([item.id]);
     }
   } catch (err) { toast(err.message, true); }
 }
@@ -2027,3 +2070,33 @@ async function start() {
 }
 
 api("/api/me").then(start).catch(() => {});
+
+// The trash: what it is, and a button to empty it (above the list, like a journal's header).
+function renderTrashHead() {
+  const box = $("#journal-hero");
+  if (state.view.type !== "trash") {
+    box.classList.remove("trash-head");
+    return;
+  }
+  const n = state.items.length;
+  box.hidden = false;
+  box.dataset.name = "";
+  box.classList.add("trash-head");
+  box.innerHTML = `<div class="jh-text">
+      <h2>${icon("trash")} Trash</h2>
+      <p class="muted">${n ? "Deleted papers stay here for 30 days, with their PDFs, notes and annotations, and are then deleted for good."
+        : "The trash is empty. Papers you delete stay here for 30 days before they are deleted for good."}</p>
+    </div>
+    ${n ? `<div class="works-buttons"><button type="button" class="danger" data-act="empty-trash">${icon("trash")} Empty trash</button></div>` : ""}`;
+}
+
+$("#journal-hero").addEventListener("click", async (e) => {
+  if (!e.target.closest("[data-act=empty-trash]")) return;
+  const n = state.items.length;
+  if (!confirm(`Delete the ${n} paper${n === 1 ? "" : "s"} in the trash for good, with their PDFs, notes and annotations? This cannot be undone.`)) return;
+  try {
+    await api("/api/trash/empty", { method: "POST" });
+    toast("Trash emptied");
+    refresh();
+  } catch (err) { toast(err.message, true); }
+});

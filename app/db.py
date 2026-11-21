@@ -4,7 +4,7 @@ import json
 import re
 import sqlite3
 import unicodedata
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 from . import storage
 from .config import settings
@@ -233,6 +233,7 @@ def init_db() -> None:
         ("cover_figure_id", "INTEGER"),   # chosen thumbnail (NULL: the first figure)
         ("figures_version", "INTEGER"),   # figures.VERSION that produced them
         ("authors_checked", "TEXT"),      # when authors' ORCID iDs were looked for (authors.py)
+        ("deleted_at", "TEXT"),           # in the trash since (NULL: in the library)
     ]:
         if column not in columns:
             conn.execute(f"ALTER TABLE items ADD COLUMN {column} {kind}")
@@ -416,8 +417,9 @@ def venue_key_sql(col: str = "venue") -> str:
 def list_items(conn, q: str | None = None, collection_id: int | None = None,
                tag: str | None = None, unfiled: bool = False, sort: str = "year",
                ids: list[int] | None = None, subcollections: bool = False,
-               to_read: bool = False, venue: str | None = None) -> list[dict]:
-    where, params = [], []
+               to_read: bool = False, venue: str | None = None, trash: bool = False) -> list[dict]:
+    # Papers in the trash are listed only in the trash.
+    where, params = [f"i.deleted_at IS {'NOT ' if trash else ''}NULL"], []
     if venue:
         # A journal: the same name, regardless of case and spacing (see journals.key).
         where.append(f"{venue_key_sql('i.venue')} = ?")
@@ -452,7 +454,7 @@ def list_items(conn, q: str | None = None, collection_id: int | None = None,
     sql = f"SELECT i.*, {_ANN_COUNT} FROM items i"
     if where:
         sql += " WHERE " + " AND ".join(where)
-    sql += " ORDER BY " + SORTS.get(sort, SORTS["year"])
+    sql += " ORDER BY " + ("i.deleted_at DESC" if trash else SORTS.get(sort, SORTS["year"]))
     rows = conn.execute(sql, params).fetchall()
     tags, cols, supp, figs = _relations(conn, [r["id"] for r in rows])
     items = [_row_to_item(r, tags[r["id"]], cols[r["id"]], supp[r["id"]], figs[r["id"]])
@@ -499,6 +501,15 @@ def search_snippets(conn, fts: str) -> dict[int, dict]:
 
 def find_duplicate(conn, doi: str | None = None, arxiv_id: str | None = None,
                    file_hash: str | None = None) -> int | None:
+    """The paper already in the library with this PDF, DOI or arXiv ID. Adding a paper that
+    is in the trash takes it out of the trash."""
+    found = _find_duplicate(conn, doi, arxiv_id, file_hash)
+    if found and conn.execute("SELECT deleted_at FROM items WHERE id = ?", (found,)).fetchone()["deleted_at"]:
+        restore_item(conn, found)
+    return found
+
+
+def _find_duplicate(conn, doi: str | None, arxiv_id: str | None, file_hash: str | None) -> int | None:
     if file_hash:
         r = conn.execute("SELECT id FROM items WHERE file_hash = ?", (file_hash,)).fetchone()
         if r:
@@ -609,6 +620,29 @@ def set_file(conn, item_id: int, file: dict, fulltext: str) -> None:
                  "WHERE id = ?", (file["name"], file["size"], file["hash"], now(), item_id))
     reindex(conn, item_id, fulltext=fulltext)
     conn.commit()
+
+
+TRASH_DAYS = 30
+
+
+def trash_item(conn, item_id: int) -> None:
+    """Move a paper to the trash: it leaves every list, but keeps its PDF, notes and figures.
+    Its authors stay linked to it (so they come back as they were), but do not count, or
+    appear among the people in the library, unless they have other papers or are followed."""
+    conn.execute("UPDATE items SET deleted_at = ? WHERE id = ? AND deleted_at IS NULL", (now(), item_id))
+    conn.commit()
+
+
+def restore_item(conn, item_id: int) -> None:
+    conn.execute("UPDATE items SET deleted_at = NULL WHERE id = ?", (item_id,))
+    conn.commit()
+
+
+def expired_trash(conn, days: int = TRASH_DAYS) -> list[int]:
+    """Papers in the trash for longer than `days`."""
+    cutoff = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat(timespec="seconds")
+    return [r[0] for r in conn.execute(
+        "SELECT id FROM items WHERE deleted_at IS NOT NULL AND deleted_at < ?", (cutoff,))]
 
 
 def delete_item(conn, item_id: int) -> list[str]:
@@ -734,7 +768,8 @@ def set_tags(conn, item_id: int, names: list[str], do_reindex: bool = True) -> N
 def list_tags(conn) -> list[dict]:
     rows = conn.execute(
         "SELECT t.name, COUNT(it.item_id) AS count FROM tags t "
-        "JOIN item_tags it ON it.tag_id = t.id GROUP BY t.id ORDER BY lower(t.name)")
+        "JOIN item_tags it ON it.tag_id = t.id JOIN items i ON i.id = it.item_id AND i.deleted_at IS NULL "
+        "GROUP BY t.id ORDER BY lower(t.name)")
     return [dict(r) for r in rows]
 
 
@@ -746,11 +781,13 @@ def list_collections(conn) -> list[dict]:
     """Collections with `count` (items directly inside) and `total` (distinct items in the
     collection or any of its subcollections)."""
     rows = [dict(r) for r in conn.execute(
-        "SELECT c.id, c.name, c.parent_id, COUNT(ic.item_id) AS count FROM collections c "
+        "SELECT c.id, c.name, c.parent_id, COUNT(i.id) AS count FROM collections c "
         "LEFT JOIN item_collections ic ON ic.collection_id = c.id "
+        "LEFT JOIN items i ON i.id = ic.item_id AND i.deleted_at IS NULL "
         "GROUP BY c.id ORDER BY lower(c.name)")]
     members: dict[int, set[int]] = {r["id"]: set() for r in rows}
-    for item_id, cid in conn.execute("SELECT item_id, collection_id FROM item_collections"):
+    for item_id, cid in conn.execute("SELECT ic.item_id, ic.collection_id FROM item_collections ic "
+                                     "JOIN items i ON i.id = ic.item_id AND i.deleted_at IS NULL"):
         members[cid].add(item_id)
     children: dict[int, list[int]] = {}
     for r in rows:
@@ -922,9 +959,11 @@ def library_counts(conn) -> dict:
         "SELECT COUNT(*) AS all_items, "
         "SUM(id NOT IN (SELECT item_id FROM item_collections)) AS unfiled, "
         "SUM(to_read_at IS NOT NULL) AS to_read, "
-        f"COUNT(DISTINCT CASE WHEN trim(venue) != '' THEN {venue_key_sql()} END) AS journals FROM items").fetchone()
+        f"COUNT(DISTINCT CASE WHEN trim(venue) != '' THEN {venue_key_sql()} END) AS journals "
+        "FROM items WHERE deleted_at IS NULL").fetchone()
+    trash = conn.execute("SELECT COUNT(*) FROM items WHERE deleted_at IS NOT NULL").fetchone()[0]
     return {"all": row["all_items"], "unfiled": row["unfiled"] or 0, "to_read": row["to_read"] or 0,
-            "journals": row["journals"] or 0}
+            "journals": row["journals"] or 0, "trash": trash}
 
 
 def missing_details(item: dict) -> list[str]:

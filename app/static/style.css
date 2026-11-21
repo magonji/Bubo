@@ -1267,3 +1267,19 @@ body.works-view .list-tools { display: none; }
   .fa-orcid { width: 100%; padding-left: 28px; }
   .fa-orcid input { flex: 1; width: auto; font-size: 16px; }
 }
+
+/* The trash */
+.toast { display: flex; align-items: center; gap: 14px; }
+.toast-undo { margin-left: auto; padding: 2px 4px; border: none; background: none; color: var(--accent); font: inherit; font-weight: 700; cursor: pointer; }
+.journal-hero.trash-head { align-items: center; justify-content: space-between; }
+.trash-head h2 { display: flex; align-items: center; gap: 8px; font-size: 22px !important; }
+.trash-head .icon { width: 20px; height: 20px; }
+.trash-head .works-buttons { flex: none; margin: 0; }
+.pv-trashed { display: flex; align-items: center; gap: 10px; margin-bottom: 14px; padding: 10px 12px; border-radius: 12px;
+  background: color-mix(in srgb, var(--danger) 12%, transparent); font-size: 13.5px; }
+.pv-trashed .icon { flex: none; width: 18px; height: 18px; color: var(--danger); }
+.pv-trashed span { flex: 1; }
+.pv-trashed button { flex: none; min-height: 34px; padding: 4px 14px; }
+@media (max-width: 760px), (hover: none) and (max-width: 1100px) {
+  .journal-hero.trash-head { flex-direction: column; align-items: stretch; }
+}

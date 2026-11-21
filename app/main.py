@@ -252,9 +252,12 @@ def me():
 @app.get("/api/items", dependencies=[Auth])
 def list_items(conn: Conn, q: str | None = None, collection: int | None = None,
                tag: str | None = None, unfiled: bool = False, sort: str = "year",
-               subcollections: bool = False, to_read: bool = False, venue: str | None = None):
+               subcollections: bool = False, to_read: bool = False, venue: str | None = None,
+               trash: bool = False):
+    if trash:
+        purge_expired_trash(conn)
     return db.list_items(conn, q=q, collection_id=collection, tag=tag, unfiled=unfiled, sort=sort,
-                         subcollections=subcollections, to_read=to_read, venue=venue)
+                         subcollections=subcollections, to_read=to_read, venue=venue, trash=trash)
 
 
 @app.get("/api/journals", dependencies=[Auth])
@@ -306,12 +309,43 @@ def update_item(item_id: int, body: ItemIn, conn: Conn):
 
 
 @app.delete("/api/items/{item_id}", dependencies=[Auth])
-def delete_item(item_id: int, conn: Conn):
-    _item_or_404(conn, item_id)
+def delete_item(item_id: int, conn: Conn, permanent: bool = False):
+    """Move a paper to the trash, or (permanent, from the trash) delete it and its files."""
+    item = _item_or_404(conn, item_id)
+    if permanent or item.get("deleted_at"):
+        _purge(conn, item_id)
+    else:
+        db.trash_item(conn, item_id)
+    return {"ok": True}
+
+
+def _purge(conn, item_id: int) -> None:
     for name in db.delete_item(conn, item_id):
         storage.delete(name)
     figures.remove_files(item_id)
-    return {"ok": True}
+
+
+def purge_expired_trash(conn) -> int:
+    """Papers in the trash for more than 30 days are deleted for good."""
+    ids = db.expired_trash(conn)
+    for item_id in ids:
+        _purge(conn, item_id)
+    return len(ids)
+
+
+@app.post("/api/items/{item_id}/restore", dependencies=[Auth])
+def restore_item(item_id: int, conn: Conn):
+    _item_or_404(conn, item_id)
+    db.restore_item(conn, item_id)
+    return db.get_item(conn, item_id)
+
+
+@app.post("/api/trash/empty", dependencies=[Auth])
+def empty_trash(conn: Conn):
+    ids = [r[0] for r in conn.execute("SELECT id FROM items WHERE deleted_at IS NOT NULL")]
+    for item_id in ids:
+        _purge(conn, item_id)
+    return {"deleted": len(ids)}
 
 
 @app.post("/api/items/upload", dependencies=[Auth])
@@ -585,7 +619,7 @@ def list_people(conn: Conn, scope: str = "following"):
     out = {"people": people.list_people(conn, "all" if scope == "all" else "following"),
            "radar_unseen": people.radar_unseen(conn)}
     if scope != "all":
-        out["everyone"] = conn.execute("SELECT COUNT(*) FROM people").fetchone()[0]
+        out["everyone"] = conn.execute(f"SELECT COUNT(*) FROM people p WHERE {people.IN_LIBRARY}").fetchone()[0]
     return out
 
 
@@ -964,3 +998,10 @@ def list_tags(conn: Conn):
 def healthz():
     return {"ok": True}
 
+
+# Papers in the trash for more than 30 days go for good (at startup, and when the trash is opened).
+_trash_conn = db.connect()
+try:
+    purge_expired_trash(_trash_conn)
+finally:
+    _trash_conn.close()

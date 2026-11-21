@@ -125,10 +125,13 @@ def link_item(conn, item_id: int) -> None:
 
 
 def drop_orphans(conn) -> None:
+    """People you do not follow who are no longer an author of any paper (not even one in
+    the trash) go, with their photo."""
     for (pid,) in conn.execute(
-            "SELECT id FROM people WHERE followed = 0 AND photo IS NULL "
+            "SELECT id FROM people WHERE followed = 0 "
             "AND id NOT IN (SELECT person_id FROM item_authors)").fetchall():
         conn.execute("DELETE FROM people WHERE id = ?", (pid,))
+        people.delete_photo(pid)
 
 
 def merge_by_name(conn) -> None:
@@ -141,7 +144,7 @@ def merge_by_name(conn) -> None:
     for r in rows:
         conn.execute("UPDATE OR IGNORE item_authors SET person_id = ? WHERE person_id = ?", (r["target"], r["id"]))
         conn.execute("DELETE FROM item_authors WHERE person_id = ?", (r["id"],))
-        conn.execute("DELETE FROM people WHERE id = ? AND photo IS NULL", (r["id"],))
+        conn.execute("DELETE FROM people WHERE id = ? AND photo IS NULL", (r["id"],))   # a photo of their own: kept
 
 
 def link_all(conn) -> None:
@@ -304,7 +307,7 @@ def run_pending(conn) -> int:
     found = 0
     while True:
         ids = [r[0] for r in conn.execute(
-            "SELECT id FROM items WHERE authors_checked IS NULL ORDER BY id DESC LIMIT ?", (BATCH,))]
+            "SELECT id FROM items WHERE authors_checked IS NULL AND deleted_at IS NULL ORDER BY id DESC LIMIT ?", (BATCH,))]
         if not ids:
             return found
         found += resolve(conn, ids)

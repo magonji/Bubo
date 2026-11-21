@@ -31,7 +31,7 @@ def list_journals(conn) -> list[dict]:
         "SELECT i.id, i.venue, i.venue_short, i.publisher, i.year, i.added_at, i.to_read_at, "
         "COALESCE((SELECT f.id || ':' || f.pdf_hash || ':' || IFNULL(f.fill, 0) FROM figures f WHERE f.id = i.cover_figure_id AND f.item_id = i.id), "
         " (SELECT f.id || ':' || f.pdf_hash || ':' || IFNULL(f.fill, 0) FROM figures f WHERE f.item_id = i.id ORDER BY f.idx LIMIT 1)) AS cover "
-        "FROM items i WHERE i.venue IS NOT NULL AND trim(i.venue) != '' "
+        "FROM items i WHERE i.venue IS NOT NULL AND trim(i.venue) != '' AND i.deleted_at IS NULL "
         "ORDER BY i.year DESC NULLS LAST, i.added_at DESC").fetchall()
     groups: dict[str, dict] = {}
     for r in rows:

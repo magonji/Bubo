@@ -508,7 +508,7 @@ def refresh_all(conn) -> int:
 
 def _library_dois(conn) -> dict[str, int]:
     return {r[0]: r[1] for r in conn.execute(
-        "SELECT lower(doi), id FROM items WHERE doi IS NOT NULL AND doi != ''")}
+        "SELECT lower(doi), id FROM items WHERE doi IS NOT NULL AND doi != '' AND deleted_at IS NULL")}
 
 
 def _work_dict(r, library: dict[str, int]) -> dict:
@@ -529,7 +529,11 @@ def _person_dict(r) -> dict:
     return p
 
 
-_PAPERS = "(SELECT COUNT(DISTINCT a.item_id) FROM item_authors a WHERE a.person_id = p.id) AS papers"
+_PAPERS = ("(SELECT COUNT(DISTINCT a.item_id) FROM item_authors a JOIN items i ON i.id = a.item_id "
+           "AND i.deleted_at IS NULL WHERE a.person_id = p.id) AS papers")
+# The people in the library: those you follow and the authors of papers not in the trash.
+IN_LIBRARY = ("(p.followed = 1 OR EXISTS (SELECT 1 FROM item_authors a JOIN items i ON i.id = a.item_id "
+              "AND i.deleted_at IS NULL WHERE a.person_id = p.id))")
 
 
 def list_people(conn, scope: str = "following", person_id: int | None = None) -> list[dict]:
@@ -542,7 +546,7 @@ def list_people(conn, scope: str = "following", person_id: int | None = None) ->
             "(SELECT COUNT(*) FROM person_works w WHERE w.person_id = p.id) AS works, "
             "(SELECT COUNT(*) FROM person_works w WHERE w.person_id = p.id AND w.is_new = 1 "
             " AND w.dismissed_at IS NULL AND w.seen_at IS NULL) AS unseen "
-            "FROM people p ORDER BY p.followed DESC, papers DESC, lower(p.family_name), lower(p.name)")
+            f"FROM people p WHERE {IN_LIBRARY} ORDER BY p.followed DESC, papers DESC, lower(p.family_name), lower(p.name)")
         return [_person_dict(r) for r in rows]
     where, params = ("p.id = ?", (person_id,)) if person_id is not None else ("p.followed = 1", ())
     return [_person_dict(r) for r in conn.execute(
@@ -550,7 +554,7 @@ def list_people(conn, scope: str = "following", person_id: int | None = None) ->
             "(SELECT COUNT(*) FROM person_works w WHERE w.person_id = p.id AND w.is_new = 1 "
             " AND w.dismissed_at IS NULL AND w.seen_at IS NULL) AS unseen, "
             "(SELECT COUNT(*) FROM person_works w WHERE w.person_id = p.id AND (w.item_id IS NOT NULL OR "
-            " EXISTS (SELECT 1 FROM items i WHERE lower(i.doi) = w.doi))) AS in_library "
+            " EXISTS (SELECT 1 FROM items i WHERE lower(i.doi) = w.doi AND i.deleted_at IS NULL))) AS in_library "
             f"FROM people p WHERE {where} ORDER BY lower(p.name)", params)]
 
 
@@ -563,7 +567,7 @@ def person_items(conn, person_id: int) -> list[dict]:
     """Their papers in your library, newest first."""
     return [dict(r) | {"authors": json.loads(r["authors"] or "[]")} for r in conn.execute(
         "SELECT DISTINCT i.id, i.title, i.authors, i.venue, i.year, i.doi FROM item_authors a "
-        "JOIN items i ON i.id = a.item_id WHERE a.person_id = ? "
+        "JOIN items i ON i.id = a.item_id WHERE a.person_id = ? AND i.deleted_at IS NULL "
         "ORDER BY i.year DESC NULLS LAST, i.added_at DESC", (person_id,))]
 
 

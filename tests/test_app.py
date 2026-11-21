@@ -132,7 +132,7 @@ def test_full_flow(client):
     assert client.patch(f"/api/items/{other['id']}", json={"citekey": "lovelace2021deep"}).status_code == 409
 
     # Deleting also removes the file and orphaned tags.
-    assert client.delete(f"/api/items/{item_id}").status_code == 200
+    assert client.delete(f"/api/items/{item_id}?permanent=true").status_code == 200
     assert client.get(f"/api/items/{item_id}").status_code == 404
     assert client.get("/api/tags").json() == []
     assert not list(main.settings.papers_dir.rglob("*.pdf"))
@@ -218,7 +218,7 @@ def test_annotations(client):
     # Deleting.
     assert client.delete(f"/api/annotations/{note['id']}").status_code == 200
     assert client.get(f"/api/items/{item_id}").json()["annotation_count"] == 1
-    client.delete(f"/api/items/{item_id}")
+    client.delete(f"/api/items/{item_id}?permanent=true")
     assert client.patch(f"/api/annotations/{hl['id']}", json={"color": "pink"}).status_code == 404
 
 
@@ -241,7 +241,7 @@ def test_flat_readable_names(client, monkeypatch):
     login(client)
     from app import storage
     for it in client.get("/api/items").json():
-        client.delete(f"/api/items/{it['id']}")
+        client.delete(f"/api/items/{it['id']}?permanent=true")
 
     thesis = client.post("/api/collections", json={"name": "Thesis"}).json()["id"]
     reading = client.post("/api/collections", json={"name": "Reading"}).json()["id"]
@@ -280,7 +280,7 @@ def test_flat_readable_names(client, monkeypatch):
     assert "%28annotated%29.pdf" in r.headers["content-disposition"]
 
     for it in client.get("/api/items").json():
-        client.delete(f"/api/items/{it['id']}")
+        client.delete(f"/api/items/{it['id']}?permanent=true")
     assert pdf_files() == []
 
     assert storage.clean_component(' CON ', 50, "x") == "_CON"
@@ -313,8 +313,8 @@ def test_older_layouts_are_migrated(client):
     assert not legacy.exists() and not (main.settings.papers_dir / "Thesis").exists()
     assert client.get(f"/api/items/{a}/file").content == data
     assert client.get(f"/api/items/{b}/file").content == other
-    client.delete(f"/api/items/{a}")
-    client.delete(f"/api/items/{b}")
+    client.delete(f"/api/items/{a}?permanent=true")
+    client.delete(f"/api/items/{b}?permanent=true")
 
 
 def test_refresh_preview_lists_changes_without_saving(client):
@@ -348,7 +348,7 @@ def test_refresh_preview_lists_changes_without_saving(client):
     assert client.get(f"/api/items/{bare['id']}/refresh-preview").status_code == 422
     assert client.post(f"/api/items/{item['id']}/refresh").status_code in (404, 405)
     for i in (item, bare):
-        client.delete(f"/api/items/{i['id']}")
+        client.delete(f"/api/items/{i['id']}?permanent=true")
 
 
 def test_diff_never_blanks_fields():
@@ -385,7 +385,7 @@ def test_citations_and_settings(client):
     assert [s["id"] for s in styles] == list(citation.STYLES)
     assert all(s["example"]["text"] for s in styles)
     client.patch("/api/settings", json={"citation_style": "apa"})
-    client.delete(f"/api/items/{item['id']}")
+    client.delete(f"/api/items/{item['id']}?permanent=true")
 
 
 def test_citation_edge_cases():
@@ -405,7 +405,7 @@ def test_citation_edge_cases():
 def test_subcollections_and_moving(client):
     login(client)
     for it in client.get("/api/items").json():
-        client.delete(f"/api/items/{it['id']}")
+        client.delete(f"/api/items/{it['id']}?permanent=true")
     for c in client.get("/api/collections").json():
         client.delete(f"/api/collections/{c['id']}")
     new = lambda name, parent=None: client.post("/api/collections", json={"name": name, "parent_id": parent}).json()["id"]
@@ -438,7 +438,7 @@ def test_subcollections_and_moving(client):
     assert client.patch("/api/settings", json={"include_subcollections": True}).json()["include_subcollections"]
     client.patch("/api/settings", json={"include_subcollections": False})
     for it in client.get("/api/items").json():
-        client.delete(f"/api/items/{it['id']}")
+        client.delete(f"/api/items/{it['id']}?permanent=true")
     for c in client.get("/api/collections").json():
         client.delete(f"/api/collections/{c['id']}")
 
@@ -482,18 +482,18 @@ def test_search_excerpts_and_page_matches(client, monkeypatch):
     assert client.get(f"/api/items/{item_id}/text-matches", params={"q": "EURAS"}).json()["total"] == 1
     assert textsearch.terms("Café crème") == ["cafe", "creme"]
     assert client.get(f"/api/items/{item_id}/text-matches", params={"q": "zebra"}).json()["total"] == 0
-    client.delete(f"/api/items/{item_id}")
+    client.delete(f"/api/items/{item_id}?permanent=true")
 
 
 def test_reading_list(client):
     login(client)
     for it in client.get("/api/items").json():
-        client.delete(f"/api/items/{it['id']}")
+        client.delete(f"/api/items/{it['id']}?permanent=true")
     a = client.post("/api/items", json={"title": "Later", "to_read": True}).json()
     b = client.post("/api/items", json={"title": "Already read"}).json()
     assert a["to_read"] and a["to_read_at"] and not b["to_read"]
     assert [i["title"] for i in client.get("/api/items", params={"to_read": True}).json()] == ["Later"]
-    assert client.get("/api/library-counts").json() == {"all": 2, "unfiled": 2, "to_read": 1, "journals": 0}
+    assert client.get("/api/library-counts").json() == {"all": 2, "unfiled": 2, "to_read": 1, "journals": 0, "trash": 0}
 
     # Adding again keeps the original date; removing takes it off the list.
     again = client.patch(f"/api/items/{a['id']}", json={"to_read": True}).json()
@@ -506,7 +506,7 @@ def test_reading_list(client):
     # Other edits leave the flag alone.
     assert client.patch(f"/api/items/{b['id']}", json={"title": "Renamed"}).json()["to_read"]
     for i in (a, b):
-        client.delete(f"/api/items/{i['id']}")
+        client.delete(f"/api/items/{i['id']}?permanent=true")
 
 
 
@@ -514,7 +514,7 @@ def test_new_items_to_reading_list_and_queue_order(client, monkeypatch):
     login(client)
     import time
     for it in client.get("/api/items").json():
-        client.delete(f"/api/items/{it['id']}")
+        client.delete(f"/api/items/{it['id']}?permanent=true")
     monkeypatch.setattr(metadata, "identify_pdf", lambda info: None)
     pdf_a, pdf_b = make_pdf("Paper A"), make_pdf("Paper B")
     r = client.post("/api/items/upload", data={"to_read": "true"},
@@ -543,7 +543,7 @@ def test_new_items_to_reading_list_and_queue_order(client, monkeypatch):
     assert client.patch("/api/settings", json={"new_items_to_read": True}).json()["new_items_to_read"]
     client.patch("/api/settings", json={"new_items_to_read": False})
     for it in client.get("/api/items").json():
-        client.delete(f"/api/items/{it['id']}")
+        client.delete(f"/api/items/{it['id']}?permanent=true")
 
 
 def test_pubmed_ids(client, monkeypatch):
@@ -571,13 +571,13 @@ def test_pubmed_ids(client, monkeypatch):
     assert r["status"] == "created" and item["title"] == "Owls at night" and item["year"] == 2019
     assert item["authors"] == [{"given": "A.", "family": "Hoot"}] and item["pages"] == "1–9"
     assert item["url"] == "https://pubmed.ncbi.nlm.nih.gov/111/"
-    client.delete(f"/api/items/{item['id']}")
+    client.delete(f"/api/items/{item['id']}?permanent=true")
 
 
 def test_find_pdf_and_overview(client, monkeypatch):
     login(client)
     for it in client.get("/api/items").json():
-        client.delete(f"/api/items/{it['id']}")
+        client.delete(f"/api/items/{it['id']}?permanent=true")
     full = client.post("/api/items", json={"title": "Complete", "authors": [{"family": "A"}], "year": 2020,
                                            "item_type": "misc", "doi": "10.1/x", "to_read": True}).json()
     bare = client.post("/api/items", json={"title": "New item"}).json()
@@ -597,7 +597,7 @@ def test_find_pdf_and_overview(client, monkeypatch):
     assert found["has_file"] and client.get(f"/api/items/{full['id']}/file").content == data
     assert client.post(f"/api/items/{full['id']}/find-pdf").status_code == 409
     for i in (full, bare):
-        client.delete(f"/api/items/{i['id']}")
+        client.delete(f"/api/items/{i['id']}?permanent=true")
 
 
 
@@ -624,7 +624,7 @@ def all_files():
 def test_supplementary_files(client):
     login(client)
     for it in client.get("/api/items").json():
-        client.delete(f"/api/items/{it['id']}")
+        client.delete(f"/api/items/{it['id']}?permanent=true")
     paper = make_pdf("Main paper text")
     r = client.post("/api/items/upload", files=[("files", ("paper.pdf", paper, "application/pdf"))])
     item_id = r.json()["results"][0]["id"]
@@ -680,7 +680,7 @@ def test_supplementary_files(client):
     assert client.get("/api/items", params={"q": "serrations"}).json() == []
 
     # Deleting the paper removes its supplementary files too.
-    client.delete(f"/api/items/{item_id}")
+    client.delete(f"/api/items/{item_id}?permanent=true")
     assert all_files() == []
 
 
@@ -767,8 +767,8 @@ def test_figures_api(client):
     figures.wait()
     p = client.get(f"/api/items/{plain_id}").json()
     assert p["figures_status"] == "none" and p["cover"] is None
-    client.delete(f"/api/items/{item_id}")
-    client.delete(f"/api/items/{plain_id}")
+    client.delete(f"/api/items/{item_id}?permanent=true")
+    client.delete(f"/api/items/{plain_id}?permanent=true")
     assert not figures.item_dir(item_id).exists()
 
 
@@ -788,7 +788,7 @@ def test_cli_fills_in_missing_figures(client, capsys):
     cli.main(["figures"])
     assert client.get(f"/api/items/{item_id}").json()["figure_count"] == 2
     assert "2 figures" in capsys.readouterr().out
-    client.delete(f"/api/items/{item_id}")
+    client.delete(f"/api/items/{item_id}?permanent=true")
 
 
 def test_paper_address_serves_the_app(client):
@@ -812,7 +812,7 @@ def test_figures_report_and_newer_versions(client, capsys):
     from tests.sample_pdfs import raster_paper
     login(client)
     for it in client.get("/api/items").json():
-        client.delete(f"/api/items/{it['id']}")
+        client.delete(f"/api/items/{it['id']}?permanent=true")
     with_figs = client.post("/api/items/upload", files=[("files", ("a.pdf", raster_paper(), "application/pdf"))]).json()["results"][0]["id"]
     plain = client.post("/api/items/upload", files=[("files", ("b.pdf", make_pdf("Only words"), "application/pdf"))]).json()["results"][0]["id"]
     no_pdf = client.post("/api/items", json={"title": "Paper without a PDF"}).json()["id"]
@@ -838,7 +838,7 @@ def test_figures_report_and_newer_versions(client, capsys):
     cli.main(["figures"])
     assert "Every paper already has its figures." in capsys.readouterr().out
     for i in (with_figs, plain, no_pdf):
-        client.delete(f"/api/items/{i}")
+        client.delete(f"/api/items/{i}?permanent=true")
 
 
 # --------------------------------------------------------------------------- #
@@ -860,7 +860,7 @@ def test_following_people_and_the_radar(client, monkeypatch):
     from app import people
     login(client)
     for it in client.get("/api/items").json():
-        client.delete(f"/api/items/{it['id']}")
+        client.delete(f"/api/items/{it['id']}?permanent=true")
     recent = (date.today() - timedelta(days=10)).isoformat()
     works = [
         {"key": "doi:10.1234/test.5678", "doi": "10.1234/test.5678", "title": "Deep Learning for Everything",
@@ -915,7 +915,7 @@ def test_following_people_and_the_radar(client, monkeypatch):
     r = client.get("/api/people").json()
     assert r["people"] == [] and r["radar_unseen"] == 0
     for it in client.get("/api/items").json():
-        client.delete(f"/api/items/{it['id']}")
+        client.delete(f"/api/items/{it['id']}?permanent=true")
 
 
 def test_openalex_works_need_the_persons_name():
@@ -1049,7 +1049,7 @@ def test_every_author_is_a_person_and_can_be_followed(client, monkeypatch):
     assert not client.get(f"/api/people/{bert}").json()["followed"]
     client.delete(f"/api/people/{ada['id']}")
     for i in (a, b):
-        client.delete(f"/api/items/{i['id']}")
+        client.delete(f"/api/items/{i['id']}?permanent=true")
     assert client.get("/api/people", params={"scope": "all"}).json()["people"] == []
 
 
@@ -1086,7 +1086,7 @@ def test_journals_gallery_and_profile(client, monkeypatch):
     assert calls == ["Journal of Owls"]                      # kept, not looked up again
     assert client.get("/api/journals").json()["journals"][1]["publisher"] == "Owl Press"
     for i in made:
-        client.delete(f"/api/items/{i['id']}")
+        client.delete(f"/api/items/{i['id']}?permanent=true")
 
 
 def test_photographs_fill_their_tile_and_margins_are_trimmed():
@@ -1132,4 +1132,75 @@ def test_html_entities_in_names_are_decoded(client):
     db.init_db()
     assert client.get(f"/api/items/{item['id']}").json()["venue"] == "Organic & Biomolecular Chemistry"
     assert [i["id"] for i in client.get("/api/items", params={"q": "Biomolecular"}).json()] == [item["id"]]
+    client.delete(f"/api/items/{item['id']}?permanent=true")
+
+
+
+def test_deleted_papers_go_to_the_trash(client):
+    login(client)
+    item = client.post("/api/items", json={"title": "Trashed", "doi": "10.9999/trash", "venue": "Bin Studies",
+                                           "authors": [{"given": "Tess", "family": "Trash"}]}).json()
+    client.put(f"/api/items/{item['id']}", json={"tags": ["rubbish"]})
+    # An author with a photo (as when their page found one on Wikimedia Commons).
+    import io
+    from PIL import Image
+    buf = io.BytesIO(); Image.new("RGB", (60, 80), "teal").save(buf, "PNG")
+    tess_id = client.get(f"/api/items/{item['id']}/people").json()["authors"][0]["id"]
+    client.post(f"/api/people/{tess_id}/photo", files={"file": ("t.png", buf.getvalue(), "image/png")})
+    assert client.delete(f"/api/items/{item['id']}").json() == {"ok": True}
+    # Gone from the library, tags, journals and people; kept in the trash.
+    assert item["id"] not in [i["id"] for i in client.get("/api/items").json()]
+    assert [i["id"] for i in client.get("/api/items", params={"trash": "true"}).json()] == [item["id"]]
+    counts = client.get("/api/library-counts").json()
+    assert counts["trash"] == 1 and counts["journals"] == 0
+    assert "rubbish" not in [t["name"] for t in client.get("/api/tags").json()]
+    assert "Tess Trash" not in [p["name"] for p in client.get("/api/people", params={"scope": "all"}).json()["people"]]
+    assert client.get("/api/people").json()["everyone"] == 0
+    assert client.get(f"/api/items/{item['id']}").json()["deleted_at"]
+    # Restored, everything comes back: the same person, with their photo.
+    client.post(f"/api/items/{item['id']}/restore")
+    assert item["id"] in [i["id"] for i in client.get("/api/items").json()]
+    tess = next(p for p in client.get("/api/people", params={"scope": "all"}).json()["people"] if p["name"] == "Tess Trash")
+    assert tess["id"] == tess_id and tess["photo_url"]
+    # Adding a paper that is in the trash takes it out of the trash.
     client.delete(f"/api/items/{item['id']}")
+    r = client.post("/api/items/import", json={"identifier": "10.9999/trash"}).json()
+    assert r["status"] == "duplicate" and r["item"]["id"] == item["id"] and not r["item"]["deleted_at"]
+    # Deleting from the trash, or emptying it, is for good.
+    client.delete(f"/api/items/{item['id']}")
+    assert client.post("/api/trash/empty").json() == {"deleted": 1}
+    assert client.get(f"/api/items/{item['id']}").status_code == 404
+    assert client.get(f"/api/people/{tess_id}").status_code == 404        # gone, with their photo
+    assert client.get("/api/library-counts").json()["trash"] == 0
+
+
+def test_trash_is_emptied_after_30_days(client):
+    from app import db, main
+    login(client)
+    item = client.post("/api/items", json={"title": "Old rubbish"}).json()
+    client.delete(f"/api/items/{item['id']}")
+    conn = db.connect()
+    conn.execute("UPDATE items SET deleted_at = '2000-01-01T00:00:00+00:00' WHERE id = ?", (item["id"],))
+    conn.commit()
+    assert main.purge_expired_trash(conn) == 1
+    conn.close()
+    assert client.get(f"/api/items/{item['id']}").status_code == 404
+
+
+def test_people_you_follow_stay_when_their_papers_are_deleted(client):
+    from app import db
+    login(client)
+    item = client.post("/api/items", json={"title": "Only paper", "authors": [{"given": "Fay", "family": "Followed"},
+                                                                            {"given": "Nell", "family": "Notfollowed"}]}).json()
+    fay, nell = [a["id"] for a in client.get(f"/api/items/{item['id']}/people").json()["authors"]]
+    conn = db.connect()
+    conn.execute("UPDATE people SET followed = 1, orcid = '0000-0002-1825-0097' WHERE id = ?", (fay,))
+    conn.commit()
+    conn.close()
+    names = lambda: {p["name"] for p in client.get("/api/people", params={"scope": "all"}).json()["people"]}
+    client.delete(f"/api/items/{item['id']}")                    # to the trash
+    assert names() == {"Fay Followed"}
+    client.delete(f"/api/items/{item['id']}")                    # for good
+    assert names() == {"Fay Followed"} and client.get(f"/api/people/{nell}").status_code == 404
+    client.delete(f"/api/people/{fay}")
+    assert names() == set()

@@ -105,7 +105,10 @@ function createPaperView(root, mode) {
           <button type="button" role="menuitem" data-act="supp">${icon("plus")} Add supplementary files</button>
           ${i.has_file ? `<button type="button" role="menuitem" data-act="refigure">${icon("refresh")} Extract figures again</button>` : ""}
           <div class="menu-sep" role="separator"></div>
-          <button type="button" role="menuitem" data-act="delete" class="danger">${icon("trash")} Delete</button>
+          ${i.deleted_at
+            ? `<button type="button" role="menuitem" data-act="restore">${icon("refresh")} Restore</button>
+               <button type="button" role="menuitem" data-act="delete" class="danger">${icon("trash")} Delete for good</button>`
+            : `<button type="button" role="menuitem" data-act="delete" class="danger">${icon("trash")} Move to the trash</button>`}
         </div>
       </div>`;
     const toread = `<button type="button" class="pv-icon${i.to_read ? " on" : ""}" data-act="toread" aria-pressed="${i.to_read}"
@@ -114,7 +117,11 @@ function createPaperView(root, mode) {
       ? `<div class="pv-bar"><span class="pv-bar-title">${esc(TYPES[i.item_type] || "")}</span>${toread}${menu}</div>`
       : `<div class="pv-bar"><button type="button" class="pv-back" aria-label="Back to ${esc(back)}">${icon("chevron-left")}<span>${esc(back)}</span></button>${toread}${menu}</div>`;
 
+    const trashed = i.deleted_at ? `<div class="pv-trashed" role="status">${icon("trash")}
+        <span>In the trash since ${date(i.deleted_at)}. It will be deleted for good after 30 days.</span>
+        <button type="button" class="primary" data-act="restore">Restore</button></div>` : "";
     const body = `
+      ${trashed}
       ${carouselHTML(i, figureStatus)}
       ${venueYear ? `<div class="pv-venue">${esc(venueYear)}</div>` : ""}
       <h1 class="pv-title" tabindex="-1">${esc(i.title) || "(untitled)"}</h1>
@@ -284,7 +291,11 @@ function createPaperView(root, mode) {
       case "more": return toggleMenu();
       case "toread": return setToRead([i.id], !i.to_read);
       case "open": return openViewer(i);
-      case "findpdf": case "attach": case "bib": case "refresh": case "annotated": case "delete": case "cite":
+      case "delete": case "restore":
+        // On a phone, the paper screen closes: the paper has left the list it was opened from.
+        if (!pane && (act === "restore" || !i.deleted_at)) closePaper();
+        return itemAction(act, i);
+      case "findpdf": case "attach": case "bib": case "refresh": case "annotated": case "cite":
         return itemAction(act, i);
       case "edit": return editDetails(i);
       case "supp": {
