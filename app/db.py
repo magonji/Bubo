@@ -137,6 +137,13 @@ CREATE TABLE IF NOT EXISTS person_works (
     UNIQUE (person_id, work_key)
 );
 CREATE INDEX IF NOT EXISTS idx_person_works_new ON person_works(is_new, dismissed_at);
+
+-- Journals' profiles from OpenAlex, by lower-cased name (journals.py).
+CREATE TABLE IF NOT EXISTS journals (
+    key        TEXT PRIMARY KEY,
+    data       TEXT NOT NULL,      -- JSON
+    checked_at TEXT NOT NULL
+);
 """
 
 FTS_SCHEMA = """CREATE VIRTUAL TABLE IF NOT EXISTS {name} USING fts5(
@@ -349,11 +356,21 @@ def get_item_file(conn, item_id: int) -> tuple[str | None, str | None]:
     return (row["file_name"], row["citekey"]) if row else (None, None)
 
 
+# A venue's name lower-cased, trimmed and with runs of spaces collapsed (as journals.key does).
+def venue_key_sql(col: str = "venue") -> str:
+    return (f"lower(trim(replace(replace(replace(replace({col}, char(10), ' '), char(9), ' '), "
+            "'   ', ' '), '  ', ' ')))")
+
+
 def list_items(conn, q: str | None = None, collection_id: int | None = None,
                tag: str | None = None, unfiled: bool = False, sort: str = "year",
                ids: list[int] | None = None, subcollections: bool = False,
-               to_read: bool = False) -> list[dict]:
+               to_read: bool = False, venue: str | None = None) -> list[dict]:
     where, params = [], []
+    if venue:
+        # A journal: the same name, regardless of case and spacing (see journals.key).
+        where.append(f"{venue_key_sql('i.venue')} = ?")
+        params.append(" ".join(venue.lower().split()))
     if q:
         fq = fts_query(q)
         if fq:
@@ -812,8 +829,10 @@ def library_counts(conn) -> dict:
     row = conn.execute(
         "SELECT COUNT(*) AS all_items, "
         "SUM(id NOT IN (SELECT item_id FROM item_collections)) AS unfiled, "
-        "SUM(to_read_at IS NOT NULL) AS to_read FROM items").fetchone()
-    return {"all": row["all_items"], "unfiled": row["unfiled"] or 0, "to_read": row["to_read"] or 0}
+        "SUM(to_read_at IS NOT NULL) AS to_read, "
+        f"COUNT(DISTINCT CASE WHEN trim(venue) != '' THEN {venue_key_sql()} END) AS journals FROM items").fetchone()
+    return {"all": row["all_items"], "unfiled": row["unfiled"] or 0, "to_read": row["to_read"] or 0,
+            "journals": row["journals"] or 0}
 
 
 def missing_details(item: dict) -> list[str]:

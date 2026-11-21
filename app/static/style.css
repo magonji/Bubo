@@ -1187,3 +1187,49 @@ body.works-view .list-tools { display: none; }
 .pv-pane .pv-author-list { font-size: 13.5px; }
 .pv-pane .avatar-face { width: 32px; height: 32px; }
 .pv-pane .pv-face { min-height: 36px; font-size: 13.5px; }
+
+/* Journals: a gallery of covers, and a journal's header above its papers */
+.journals-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(170px, 1fr)); gap: 24px 18px; padding: 16px; }
+.journal-card { display: flex; flex-direction: column; gap: 2px; min-width: 0; color: inherit; text-decoration: none; border-radius: 14px; padding: 6px; margin: -6px; }
+.journal-card:hover { background: var(--hover); }
+.journal-card:focus-visible { outline: 2px solid var(--accent-strong); outline-offset: 2px; }
+.j-cover { position: relative; display: flex; flex-direction: column; width: 100%; aspect-ratio: 3 / 4; margin-bottom: 8px; overflow: hidden;
+  border-radius: 6px 12px 12px 6px; background: #fff; color: #fff; line-height: 1.1;
+  box-shadow: inset 4px 0 0 rgba(0, 0, 0, .14), 0 1px 2px rgba(0, 0, 0, .12), 0 6px 18px -8px rgba(0, 0, 0, .35); }
+.jc-mast { flex: none; padding: 12px 12px 10px 16px; background: hsl(var(--h) 45% 30%); }
+.jc-name { font-family: "Fraunces", Georgia, serif; font-weight: 700; font-variation-settings: "SOFT" 50; font-size: calc(17px * var(--k, 1));
+  display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; }
+.jc-figs { flex: 1; min-height: 0; display: grid; gap: 1px; background: rgba(0, 0, 0, .08); }
+.jc-n2 { grid-template-rows: 1fr 1fr; }
+.jc-n3 { grid-template: 1fr 1fr / 1fr 1fr; }
+.jc-n3 .jc-fig:first-child { grid-column: 1 / -1; }
+.jc-n4 { grid-template: 1fr 1fr / 1fr 1fr; }
+.jc-fig { display: flex; align-items: center; justify-content: center; min-height: 0; min-width: 0; padding: 6px; background: #fff; }
+.jc-fig img { max-width: 100%; max-height: 100%; object-fit: contain; }
+.jc-plain { justify-content: space-between; padding: 16px 14px 14px 18px; background: hsl(var(--h) 45% 30%); }
+.jc-plain .jc-name { font-size: calc(21px * var(--k, 1)); -webkit-line-clamp: 6; }
+.jc-short { font-size: 11px; font-weight: 600; letter-spacing: .08em; text-transform: uppercase; opacity: .85; }
+.jcard-name { font-family: "Fraunces", Georgia, serif; font-weight: 600; font-size: 16px; line-height: 1.2;
+  display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+.jcard-where { font-size: 12.5px; color: var(--muted); overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.jcard-meta { font-size: 12px; color: var(--tertiary); }
+.journal-hero { display: flex; gap: 20px; padding: 18px 16px 16px; border-bottom: 1px solid var(--border); }
+.journal-hero[hidden] { display: none; }
+.jc-hero { width: 132px; flex: none; margin: 0; align-self: flex-start; }
+.jc-hero .jc-name { font-size: calc(14px * var(--k, 1)); }
+.jc-hero.jc-plain { padding: 12px 10px 10px 14px; }
+.jc-hero.jc-plain .jc-name { font-size: calc(16px * var(--k, 1)); }
+.jh-text { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 6px; }
+.jh-text h2 { margin: 0; font-family: "Fraunces", Georgia, serif; font-weight: 600; font-size: 26px; line-height: 1.15; }
+.jh-crumb { margin: 0; font-size: 12.5px; }
+.jh-crumb .pv-link { display: inline-flex; align-items: center; gap: 5px; min-height: 0; padding: 0; }
+.jh-crumb .icon { width: 15px; height: 15px; }
+.jh-where { margin: 0; font-size: 14px; }
+@media (max-width: 760px), (hover: none) and (max-width: 1100px) {
+  .journals-grid { grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 20px 12px; padding: 12px 16px; }
+  .journal-card { margin: 0; padding: 0; }
+  .journal-hero { gap: 14px; padding: 14px 16px; }
+  .jc-hero { width: 96px; }
+  .jc-hero .jc-name, .jc-hero.jc-plain .jc-name { font-size: calc(12.5px * var(--k, 1)); }
+  .jh-text h2 { font-size: 22px; }
+}

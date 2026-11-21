@@ -69,6 +69,8 @@
         <div class="side-item" data-view="unfiled"><i data-icon="inbox"></i><span class="name">Unfiled items</span><span class="count" id="count-unfiled"></span></div>
         <div class="side-item" data-view="toread" id="side-toread" title="Papers you want to read. Drag papers here to add them.">
           <i data-icon="bookmark"></i><span class="name">Reading list</span><span class="count" id="count-toread"></span></div>
+        <div class="side-item" data-view="journals" title="The journals your papers were published in">
+          <i data-icon="journal"></i><span class="name">Journals</span><span class="count" id="count-journals"></span></div>
         <div class="side-item" data-view="radar" id="side-radar" title="New publications from the people you follow">
           <i data-icon="radar"></i><span class="name">Radar</span><span class="count" id="count-radar"></span></div>
       </div>
@@ -110,6 +112,7 @@
         </div>
       </div>
       <div class="table-wrap">
+        <div id="journal-hero" class="journal-hero" hidden></div>
         <table id="items-table">
           <colgroup id="items-cols"></colgroup>
           <thead id="items-head"></thead>
@@ -179,6 +182,7 @@
 
 <script src="/static/app.js"></script>
 <script src="/static/people.js"></script>
+<script src="/static/journals.js"></script>
 <script src="/static/paper.js"></script>
 <script type="module" src="/static/viewer.js"></script>
 </body>

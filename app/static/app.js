@@ -13,6 +13,7 @@ const ICONS = {
   library: '<path d="M4 4h4v16H4zM10 4h4v16h-4zM16.5 5.2l3.4-.9 3.1 15-3.4.9z"/>',
   inbox: '<path d="M3 13h5l1.5 3h5L16 13h5"/><path d="M5.5 5h13L21 13v6H3v-6z"/>',
   bookmark: '<path d="M6 4h12v17l-6-4.2L6 21z"/>',
+  journal: '<path d="M5 4h11a2 2 0 0 1 2 2v14H7a2 2 0 0 1-2-2z"/><path d="M18 8h1a1 1 0 0 1 1 1v9a2 2 0 0 1-2 2"/><path d="M8 8h7M8 11.5h7M8 15h4"/>',
   "bookmark-check": '<path d="M6 4h12v17l-6-4.2L6 21z"/><path d="M9.2 10.2l2 2 3.6-3.6"/>',
   note: '<path d="M5 4h14v10l-6 6H5z"/><path d="M13 20v-6h6"/>',
   comment: '<path d="M4 5h16v11H9l-5 4z"/>',
@@ -161,6 +162,7 @@ async function loadSidebar() {
 async function loadItems() {
   // A followed person's publications, or the radar (people.js).
   if (["person", "radar", "people"].includes(state.view.type)) return loadWorks();
+  if (state.view.type === "journals") return loadJournals();   // journals.js
   leaveWorksView();
   const p = new URLSearchParams({ sort: sortKey() });
   if (state.q) p.set("q", state.q);
@@ -171,8 +173,10 @@ async function loadItems() {
   if (state.view.type === "unfiled") p.set("unfiled", "true");
   if (state.view.type === "toread") p.set("to_read", "true");
   if (state.view.type === "tag") p.set("tag", state.view.name);
+  if (state.view.type === "journal") { p.set("venue", state.view.name); await ensureJournalsList(); }
   state.items = await api("/api/items?" + p);
   renderItems();
+  renderJournalHero();
 }
 
 async function refresh() {
@@ -202,6 +206,7 @@ function renderSidebar() {
   $("#count-all").textContent = counts.all || "";
   $("#count-unfiled").textContent = counts.unfiled || "";
   $("#count-toread").textContent = counts.to_read || "";
+  $("#count-journals").textContent = counts.journals || "";
 
   const byParent = {};
   for (const c of state.collections) (byParent[c.parent_id ?? "root"] ||= []).push(c);
@@ -462,7 +467,8 @@ function authorsShort(a) {
 function sectionTitle() {
   const v = state.view;
   return { all: "My library", unfiled: "Unfiled items", toread: "Reading list",
-    collection: v.name, tag: `Tag: ${v.name}`, radar: "Radar", person: v.name, people: "People" }[v.type];
+    collection: v.name, tag: `Tag: ${v.name}`, radar: "Radar", person: v.name, people: "People",
+    journals: "Journals", journal: v.name }[v.type];
 }
 function viewTitle() {
   return state.q ? `${sectionTitle()} — “${state.q}”` : sectionTitle();

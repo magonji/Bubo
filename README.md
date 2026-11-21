@@ -49,6 +49,11 @@ them from the browser.
   the last two months appear on the **Radar**, marked as new until you open it. OpenAlex
   sometimes credits a paper to the wrong ORCID iD, so its papers only count when the name
   printed on them matches the person's.
+- **Journals** gathers the journals your papers were published in as a shelf of covers, each
+  made from the figures of your latest papers in it. A journal's page lists your papers in it
+  under its publisher, h-index, citations per article and open-access status (from OpenAlex,
+  looked up when you open the page and kept for 30 days). The journal on a paper's sheet
+  links to it.
 - **People** ("Everyone" under People in the sidebar) shows the scientists you follow as a wall
   of portraits, like a library of books or films. Each person's page has their current
   position (from ORCID), citations, h-index and research topics (from OpenAlex), a short

@@ -74,7 +74,8 @@ function createPaperView(root, mode) {
     const date = (d) => new Date(d).toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" });
     const details = [
       i.venue && [{ inproceedings: "Conference", incollection: "Book", preprint: "Server", phdthesis: "University",
-        mastersthesis: "University", techreport: "Institution" }[i.item_type] || "Journal", esc(i.venue)],
+        mastersthesis: "University", techreport: "Institution" }[i.item_type] || "Journal",
+        `<button type="button" class="pv-author-link" data-act="journal">${esc(i.venue)}</button>`],
       i.year && ["Year", i.year],
       i.volume && ["Volume", esc([i.volume, i.issue && `(${i.issue})`, i.pages && `, ${i.pages}`].filter(Boolean).join(""))],
       !i.volume && i.pages && ["Pages", esc(i.pages)],
@@ -341,6 +342,7 @@ function createPaperView(root, mode) {
       case "collections": return chooseCollections(i);
       case "goto-collection": if (!pane) closePaper(); return setView({ type: "collection", id: Number(el.dataset.id) });
       case "goto-tag": if (!pane) closePaper(); return setView({ type: "tag", name: el.dataset.tag });
+      case "journal": if (!pane) closePaper(); return openJournal(i.venue.trim());
       case "add-tag": {
         const name = prompt("Add a tag")?.trim();
         if (!name) return;

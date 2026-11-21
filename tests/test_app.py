@@ -493,7 +493,7 @@ def test_reading_list(client):
     b = client.post("/api/items", json={"title": "Already read"}).json()
     assert a["to_read"] and a["to_read_at"] and not b["to_read"]
     assert [i["title"] for i in client.get("/api/items", params={"to_read": True}).json()] == ["Later"]
-    assert client.get("/api/library-counts").json() == {"all": 2, "unfiled": 2, "to_read": 1}
+    assert client.get("/api/library-counts").json() == {"all": 2, "unfiled": 2, "to_read": 1, "journals": 0}
 
     # Adding again keeps the original date; removing takes it off the list.
     again = client.patch(f"/api/items/{a['id']}", json={"to_read": True}).json()
@@ -1032,4 +1032,24 @@ def test_paper_authors_matched_to_people_followed(client, monkeypatch):
     assert m[0]["name"] == "Ada Lovelace" and m[1] is None              # a different Lovelace
     client.delete(f"/api/people/{p['id']}")
     for i in (by_doi, by_name):
+        client.delete(f"/api/items/{i['id']}")
+
+
+def test_journals_gallery_and_profile(client, monkeypatch):
+    from app import journals
+    login(client)
+    made = [client.post("/api/items", json={"title": t, "venue": v, "year": y}).json() for t, v, y in [
+        ("One", "Journal of Owls", 2019), ("Two", "journal of  owls ", 2024), ("Three", "Annals of Hooting", 2021)]]
+    js = {j["key"]: j for j in client.get("/api/journals").json()["journals"]}
+    assert set(js) == {"journal of owls", "annals of hooting"}
+    assert js["journal of owls"]["papers"] == 2 and (js["journal of owls"]["first_year"], js["journal of owls"]["last_year"]) == (2019, 2024)
+    assert client.get("/api/library-counts").json()["journals"] == 2
+    assert {i["title"] for i in client.get("/api/items", params={"venue": "JOURNAL OF OWLS"}).json()} == {"One", "Two"}
+    calls = []
+    monkeypatch.setattr(journals, "_fetch", lambda name: calls.append(name) or {"publisher": "Owl Press", "h_index": 12})
+    assert client.get("/api/journals/profile", params={"name": "Journal of Owls"}).json()["h_index"] == 12
+    client.get("/api/journals/profile", params={"name": "journal of owls"})
+    assert calls == ["Journal of Owls"]                      # kept, not looked up again
+    assert client.get("/api/journals").json()["journals"][1]["publisher"] == "Owl Press"
+    for i in made:
         client.delete(f"/api/items/{i['id']}")

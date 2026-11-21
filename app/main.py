@@ -16,7 +16,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 from starlette.middleware.sessions import SessionMiddleware
 
-from . import annotate, bibtex, citation, db, figures, metadata, pdf, people, storage, textsearch
+from . import annotate, bibtex, citation, db, figures, journals, metadata, pdf, people, storage, textsearch
 from .config import settings
 
 STATIC = Path(__file__).parent / "static"
@@ -244,9 +244,21 @@ def me():
 @app.get("/api/items", dependencies=[Auth])
 def list_items(conn: Conn, q: str | None = None, collection: int | None = None,
                tag: str | None = None, unfiled: bool = False, sort: str = "year",
-               subcollections: bool = False, to_read: bool = False):
+               subcollections: bool = False, to_read: bool = False, venue: str | None = None):
     return db.list_items(conn, q=q, collection_id=collection, tag=tag, unfiled=unfiled, sort=sort,
-                         subcollections=subcollections, to_read=to_read)
+                         subcollections=subcollections, to_read=to_read, venue=venue)
+
+
+@app.get("/api/journals", dependencies=[Auth])
+def list_journals(conn: Conn):
+    """The journals in the library (the papers' venues), for the gallery."""
+    return {"journals": journals.list_journals(conn)}
+
+
+@app.get("/api/journals/profile", dependencies=[Auth])
+def journal_profile(conn: Conn, name: str, refresh: bool = False):
+    """Publisher, ISSN, h-index… from OpenAlex (looked up at most every 30 days)."""
+    return journals.profile(conn, name, refresh=refresh)
 
 
 @app.get("/api/library-counts", dependencies=[Auth])
