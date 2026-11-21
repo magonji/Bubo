@@ -733,15 +733,6 @@ input.switch:disabled { opacity: .5; cursor: default; }
     background: transparent; color: var(--muted); display: inline-flex; align-items: center; justify-content: center; }
   .view-switch button .icon { width: 20px; height: 20px; }
   .view-switch button[aria-pressed="true"] { background: var(--hover); color: var(--text); }
-  .m-chips { display: flex !important; gap: 8px; padding: 10px 16px 14px; overflow-x: auto; scrollbar-width: none; }
-  .m-chips::-webkit-scrollbar { display: none; }
-  .chip { flex: none; height: 44px; border-radius: 999px; border: 1px solid var(--border); background: transparent;
-    padding: 0 18px; display: inline-flex; align-items: center; gap: 6px; font-size: 15px; color: var(--text); }
-  .chip[aria-pressed="true"] { background: var(--accent-subtle); border-color: var(--accent); color: var(--accent-strong); }
-  .chip-select { position: relative; padding: 0; }
-  .chip-select select { appearance: none; -webkit-appearance: none; border: none; background: transparent;
-    height: calc(100% + 2px); margin: -1px; padding: 0 40px 0 18px; font-size: 15px; border-radius: 999px; color: inherit; outline-offset: 2px; }
-  .chip-select .icon { position: absolute; right: 14px; top: 50%; transform: translateY(-50%); width: 18px; height: 18px; pointer-events: none; }
 
   /* Cards instead of the table (shared rules below, outside the media query) */
   .table-wrap > table { display: none; }
@@ -1010,4 +1001,76 @@ input.switch:disabled { opacity: .5; cursor: default; }
 @media (hover: none) and (min-width: 761px) and (max-width: 1100px) {
   .pv-screen .pv-scroll { padding-left: max(16px, calc((100% - 680px) / 2)); padding-right: max(16px, calc((100% - 680px) / 2)); }
   .pv-screen .pv-strip { margin: 0; padding: 0 0 6px; scroll-padding-inline: 0; }
+}
+
+/* ==========================================================================
+   Phones: a compact two-row header and a floating add button
+   ========================================================================== */
+.fab { display: none; }
+.sheet { display: none; }
+@media (max-width: 760px), (hover: none) and (max-width: 1100px) {
+  /* Row 1: sidebar, owl, section and count, sort, menu. Row 2: search and layout. */
+  .topbar {
+    display: grid; grid-template-columns: auto auto minmax(0, 1fr) auto auto; grid-template-rows: 52px 52px;
+    column-gap: 6px; row-gap: 0; align-items: center; padding: 0 12px 8px;
+    padding-top: env(safe-area-inset-top); padding-left: max(12px, env(safe-area-inset-left));
+    padding-right: max(12px, env(safe-area-inset-right));
+    background: var(--bg); border-bottom: 1px solid transparent;
+    transition: grid-template-rows .2s ease, border-color .2s ease;
+  }
+  .topbar.scrolled { border-bottom-color: var(--sep); }
+  #side-btn { grid-area: 1 / 1; }
+  .brand { grid-area: 1 / 2; margin: 0; }
+  .brand .wordmark { display: none; }
+  .brand .logo { width: 24px; height: 24px; }
+  .m-head { grid-area: 1 / 3; display: flex !important; align-items: baseline; gap: 8px; min-width: 0; padding-left: 4px; }
+  #m-title { margin: 0; font-size: 19px; font-weight: 600; letter-spacing: -.01em; line-height: 1.2; color: var(--text);
+    min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+  #m-count { flex: none; font-size: 14px; color: var(--muted); font-variant-numeric: tabular-nums; }
+  #m-sort-btn { grid-area: 1 / 4; }
+  .topbar .menu-wrap { grid-area: 1 / 5; }
+  .topbar .icon-btn { width: 44px; height: 44px; border: none; background: transparent; }
+  .topbar .icon-btn:active { background: var(--hover); }
+  .add-btn { display: none; }
+  .search-box { grid-area: 2 / 1 / 3 / 4; }
+  .view-switch { grid-area: 2 / 4 / 3 / 6; justify-self: end; margin: 0; }
+  /* The first row slides away on the way down the list. */
+  #side-btn, .brand, .m-head, #m-sort-btn, .topbar .menu-wrap { transition: transform .2s ease, opacity .2s ease, visibility .2s; }
+  .topbar.collapsed { grid-template-rows: 0 52px; }
+  .topbar.collapsed :is(#side-btn, .brand, .m-head, #m-sort-btn, .menu-wrap) {
+    transform: translateY(-110%); opacity: 0; visibility: hidden; pointer-events: none;
+  }
+  /* Rows that the header now holds. */
+  .list-head, .m-chips { display: none !important; }
+  .cards.gallery { padding-top: 10px; }
+  /* Room for the floating button under the last paper. */
+  .table-wrap { padding-bottom: calc(88px + env(safe-area-inset-bottom)); }
+
+  .fab {
+    display: inline-flex !important; align-items: center; justify-content: center; position: fixed; z-index: 12;
+    right: calc(16px + env(safe-area-inset-right)); bottom: calc(16px + env(safe-area-inset-bottom));
+    width: 56px; height: 56px; padding: 0; border: none; border-radius: 50%;
+    background: var(--accent); color: var(--on-accent); box-shadow: 0 6px 18px rgba(0, 0, 0, .32);
+  }
+  .fab:active { background: var(--accent-hover); }
+  .fab .icon { width: 26px; height: 26px; stroke-width: 2.2; }
+  .toasts { bottom: calc(84px + env(safe-area-inset-bottom)); }
+
+  /* The sort sheet */
+  .sheet[open] { display: flex; flex-direction: column; position: fixed; inset: auto 0 0 0; margin: 0; width: 100%; max-width: none;
+    max-height: 80vh; padding: 6px 12px calc(12px + env(safe-area-inset-bottom)); border: none; border-radius: 16px 16px 0 0;
+    background: var(--panel); color: var(--text); box-shadow: 0 -8px 30px rgba(0, 0, 0, .3); animation: sheet-up .2s ease; }
+  .sheet::backdrop { background: rgba(0, 0, 0, .45); }
+  .sheet-handle { width: 36px; height: 4px; border-radius: 2px; background: var(--border); margin: 4px auto 10px; }
+  .sheet h2 { margin: 0 6px 6px; font-size: 13px; font-weight: 600; letter-spacing: .06em; text-transform: uppercase; color: var(--muted); }
+  .sheet-options { display: flex; flex-direction: column; overflow-y: auto; }
+  .sheet-options button { display: flex; align-items: center; justify-content: space-between; min-height: 52px; padding: 0 10px;
+    border: none; border-radius: 10px; background: transparent; color: var(--text); font-size: 17px; text-align: left; }
+  .sheet-options button:active { background: var(--hover); }
+  .sheet-options button[aria-checked="true"] { color: var(--accent-strong); font-weight: 600; }
+  .sheet-options .icon { width: 22px; height: 22px; }
+}
+@keyframes sheet-up { from { transform: translateY(100%); } }
+@media (prefers-reduced-motion: reduce) {
+  .topbar, .topbar *, .sheet[open] { transition: none !important; animation: none !important; }
 }

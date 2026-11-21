@@ -35,13 +35,16 @@ them from the browser.
   **Edit details** opens the form with every field.
 - **On phones and tablets held upright** (screens up to 760 px, and touch screens up to
   1100 px such as an iPad in portrait) the library is a gallery of figure cards or a list with
-  thumbnails, and each paper has its own screen at `/paper/<id>`: a carousel of its figures,
+  thumbnails under a compact header (the section and its count, a sort button that opens a
+  sheet, the search box and the layout switch; the top row slides away as you scroll down),
+  with a floating button to add papers. Each paper has its own screen at `/paper/<id>`: a carousel of its figures,
   the abstract, details with a copyable DOI, collections, tags, notes saved as you type and
   related papers, with buttons to open the PDF, cite, file and share it. Papers without figures
   get a cover coloured from the journal's name. Bubo can be added to the home screen, where it
   opens like an app with the owl as its icon. On a computer the table stays as it is.
 - **Find PDF** for papers without one (the dimmed icon in the PDF column, or the button in the
   item pane): looks on arXiv, Unpaywall (with `BUBO_CONTACT_EMAIL` set) and the publisher's page.
+- **The order you choose** (by year, date added, title or author) is remembered between visits.
 - **Library table** with a comfortable layout (authors and venue under the title) or a compact
   one, or the papers shown by their figures: a **gallery** of cards or a **list with figures**
   (the buttons next to the list's title; these layouts have an Order menu instead of column

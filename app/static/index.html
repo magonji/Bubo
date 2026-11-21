@@ -32,6 +32,9 @@
     <button type="button" id="side-btn" class="icon-btn narrow-only" aria-label="Library, collections and tags"
       aria-controls="sidebar" aria-expanded="false"><i data-icon="sidebar"></i></button>
     <div class="brand"><svg class="logo" viewBox="0 0 32 32" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M8.5 17.5V9.5L10 4l3.6 4h4.8L22 4l1.5 5.5v8c0 5.2-3.4 9-7.5 9s-7.5-3.8-7.5-9z"/><path d="M10.2 11.2Q13 9.6 16 12.6Q19 9.6 21.8 11.2"/><circle cx="13" cy="14.6" r="1.9"/><circle cx="19" cy="14.6" r="1.9"/><path d="M16 15.8v2.2"/><path d="M5 29h22M13.5 26.4V29M18.5 26.4V29"/></svg><span class="wordmark">Bubo</span></div>
+    <div class="m-head narrow-only"><h1 id="m-title"></h1><span id="m-count"></span></div>
+    <button type="button" id="m-sort-btn" class="icon-btn narrow-only" aria-label="Sort" aria-haspopup="dialog"
+      aria-controls="sort-sheet"><i data-icon="sort"></i></button>
     <div class="search-box clearable">
       <span class="search-icon narrow-only" aria-hidden="true"><i data-icon="search"></i></span>
       <input type="search" id="search" placeholder="Search titles, authors, abstracts and full text…" aria-label="Search"
@@ -42,6 +45,10 @@
     </div>
     <button type="button" id="add-btn" class="primary add-btn" title="Add papers by identifier, from PDFs or manually" aria-label="Add papers">
       <i data-icon="plus"></i><span class="add-label">Add</span></button>
+    <div class="view-switch narrow-only" role="group" aria-label="Layout">
+      <button type="button" data-mode="gallery" aria-label="Gallery" aria-pressed="true"><i data-icon="grid"></i></button>
+      <button type="button" data-mode="list" aria-label="List" aria-pressed="false"><i data-icon="list"></i></button>
+    </div>
     <div class="menu-wrap">
       <button id="menu-btn" class="icon-btn" data-tip="Settings, export and sign out" aria-label="Menu"
         aria-haspopup="menu" aria-expanded="false" aria-controls="main-menu"><i data-icon="menu"></i></button>
@@ -77,10 +84,6 @@
       <div class="list-head">
         <span id="view-title"></span>
         <span id="count" class="muted"></span>
-        <div class="view-switch narrow-only" role="group" aria-label="Layout">
-          <button type="button" data-mode="gallery" aria-label="Gallery" aria-pressed="true"><i data-icon="grid"></i></button>
-          <button type="button" data-mode="list" aria-label="List" aria-pressed="false"><i data-icon="list"></i></button>
-        </div>
         <div class="list-tools">
           <label id="sub-toggle" class="sub-toggle hidden" title="Also list the papers in this collection's subcollections">
             <input type="checkbox" class="switch" role="switch" id="include-sub"> Include subcollections</label>
@@ -99,13 +102,6 @@
             <button type="button" class="icon-btn" data-density="figures" data-tip="List with figures" aria-label="List with figures"><i data-icon="list"></i></button>
           </div>
         </div>
-      </div>
-      <!-- Phones: layout switch and quick filters (see renderCards in app.js). -->
-      <div class="m-chips narrow-only">
-        <label class="chip chip-select"><span class="sr-only">Order</span>
-          <select id="m-sort"></select><i data-icon="chevron-down"></i></label>
-        <button type="button" class="chip" id="m-toread" aria-pressed="false">Reading list</button>
-        <button type="button" class="chip" id="m-collections" aria-controls="sidebar">Collections</button>
       </div>
       <div class="table-wrap">
         <table id="items-table">
@@ -129,6 +125,8 @@
     </section>
   </main>
   <div id="side-backdrop" class="side-backdrop" hidden></div>
+  <!-- Phones: add papers from a floating button. -->
+  <button type="button" id="fab-add" class="fab narrow-only" aria-label="Add paper"><i data-icon="plus"></i></button>
   <!-- Phones: the paper screen, /paper/<id> (paper.js). -->
   <section id="paper" class="paper-view hidden" aria-label="Paper"></section>
 </div>
@@ -166,6 +164,7 @@
 <dialog id="refresh-dialog" class="dialog" aria-labelledby="refresh-title"></dialog>
 <dialog id="pv-dialog" class="dialog dialog-narrow" aria-labelledby="pv-dialog-title"></dialog>
 <dialog id="lightbox" class="lightbox" aria-labelledby="lightbox-title"></dialog>
+<dialog id="sort-sheet" class="sheet" aria-labelledby="sort-sheet-title"></dialog>
 <input type="file" id="attach-input" accept="application/pdf,.pdf" hidden>
 <input type="file" id="supp-input" multiple hidden>
 

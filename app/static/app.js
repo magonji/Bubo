@@ -31,6 +31,7 @@ const ICONS = {
   settings: '<circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"/>',
   "file-search": '<path d="M13 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h4"/><path d="M13 3v5h5v2"/><circle cx="16.5" cy="16.5" r="3"/><path d="M21 21l-2.4-2.4"/>',
   "rows-1": '<path d="M4 6h16M4 10h16M4 14h16M4 18h16"/>',
+  sort: '<path d="M8 20V4M4 8l4-4 4 4M16 4v16M12 16l4 4 4-4"/>',
   search: '<circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/>',
   grid: '<rect x="4" y="4" width="6.5" height="6.5" rx="1.2"/><rect x="13.5" y="4" width="6.5" height="6.5" rx="1.2"/><rect x="4" y="13.5" width="6.5" height="6.5" rx="1.2"/><rect x="13.5" y="13.5" width="6.5" height="6.5" rx="1.2"/>',
   list: '<rect x="4" y="5" width="5" height="5" rx="1"/><rect x="4" y="14" width="5" height="5" rx="1"/><path d="M12 7.5h8M12 16.5h8"/>',
@@ -74,7 +75,15 @@ const sortKey = () => (state.view.type === "toread" ? state.sortToRead : state.s
 function setSortKey(value) {
   if (state.view.type === "toread") state.sortToRead = value;
   else state.sort = value;
+  try {
+    localStorage.setItem("sort", state.sort);
+    localStorage.setItem("sortToRead", state.sortToRead);
+  } catch {}
 }
+try {
+  state.sort = localStorage.getItem("sort") || state.sort;
+  state.sortToRead = localStorage.getItem("sortToRead") || state.sortToRead;
+} catch {}
 try { state.expanded = new Set(JSON.parse(localStorage.getItem("expanded") || "[]")); } catch {}
 try {
   const saved = localStorage.getItem("density");
@@ -442,11 +451,13 @@ function authorsShort(a) {
   return `${a[0].family} et al.`;
 }
 
-function viewTitle() {
+function sectionTitle() {
   const v = state.view;
-  const base = { all: "My library", unfiled: "Unfiled items", toread: "Reading list",
+  return { all: "My library", unfiled: "Unfiled items", toread: "Reading list",
     collection: v.name, tag: `Tag: ${v.name}` }[v.type];
-  return state.q ? `${base} — “${state.q}”` : base;
+}
+function viewTitle() {
+  return state.q ? `${sectionTitle()} — “${state.q}”` : sectionTitle();
 }
 
 const fullAuthors = (a) => (a || []).map((x) => [x.given, x.family].filter(Boolean).join(" ")).join(", ");
@@ -529,6 +540,18 @@ function cell(c, i) {
 function renderItems() {
   $("#view-title").textContent = viewTitle();
   $("#count").textContent = `${state.items.length} item${state.items.length === 1 ? "" : "s"}`;
+  // A different section, search or order starts at the top, with the whole header showing
+  // (refreshes of the same list keep their place).
+  const listKey = JSON.stringify([state.view, state.q, sortKey()]);
+  if (listKey !== state.listKey) {
+    state.listKey = listKey;
+    $(".table-wrap").scrollTop = 0;
+    $(".topbar").classList.remove("collapsed", "scrolled");
+  }
+  // Phones: the section in the header, with the number of papers shown (search included).
+  $("#m-title").textContent = sectionTitle();
+  $("#m-count").textContent = String(state.items.length);
+  $("#m-count").setAttribute("aria-label", `${state.items.length} item${state.items.length === 1 ? "" : "s"}`);
   $("#empty").classList.toggle("hidden", state.items.length > 0);
   renderHead();
   const cols = LAYOUTS[state.density] || LAYOUTS.comfortable;
@@ -609,7 +632,7 @@ function cardHTML(i, mode = cardMode()) {
 }
 
 const SORT_CHOICES = [["year", "Newest first"], ["year_asc", "Oldest first"], ["added", "Recently added"],
-  ["title", "Title"], ["authors", "Author"]];
+  ["title", "Title (A–Z)"], ["authors", "Author (A–Z)"]];
 const QUEUE_CHOICES = [["to_read", "Longest on the list"], ["to_read_desc", "Latest on the list"]];
 
 let figurePoll;
@@ -623,13 +646,6 @@ function renderCards() {
   box.className = `cards ${mode}`;
   box.innerHTML = state.items.map((i) => cardHTML(i, mode)).join("");
   $$(".view-switch [data-mode]").forEach((b) => b.setAttribute("aria-pressed", String(b.dataset.mode === state.mobileView)));
-  const choices = state.view.type === "toread" ? [...SORT_CHOICES, ...QUEUE_CHOICES] : SORT_CHOICES;
-  const sort = sortKey();
-  const select = $("#m-sort");
-  select.innerHTML = choices.map(([v, label]) => `<option value="${v}">${label}</option>`).join("") +
-    (choices.some(([v]) => v === sort) ? "" : `<option value="${esc(sort)}">Custom order</option>`);
-  select.value = sort;
-  $("#m-toread").setAttribute("aria-pressed", String(state.view.type === "toread"));
   // Figures are extracted in the background after a PDF arrives: check back for them.
   if (state.items.some((i) => i.figures_status === "pending")) figurePoll = setTimeout(loadItems, 4000);
 }
@@ -673,10 +689,51 @@ $$(".view-switch [data-mode]").forEach((b) => b.addEventListener("click", () => 
   try { localStorage.setItem(MOBILE_VIEW_KEY, state.mobileView); } catch {}
   renderCards();
 }));
-$("#m-sort").addEventListener("change", (e) => { setSortKey(e.target.value); loadItems(); });
-$("#m-toread").addEventListener("click", () =>
-  setView({ type: state.view.type === "toread" ? "all" : "toread" }));
-$("#m-collections").addEventListener("click", () => openDrawer());
+
+// Phones: the order is chosen in a sheet that rises from the bottom.
+function openSortSheet() {
+  const dlg = $("#sort-sheet");
+  const choices = state.view.type === "toread" ? [...SORT_CHOICES, ...QUEUE_CHOICES] : SORT_CHOICES;
+  const sort = sortKey();
+  dlg.innerHTML = `<div class="sheet-handle" aria-hidden="true"></div>
+    <h2 id="sort-sheet-title">Sort by</h2>
+    <div class="sheet-options" role="radiogroup" aria-labelledby="sort-sheet-title">
+      ${choices.map(([v, label]) => `<button type="button" role="radio" aria-checked="${v === sort}" data-sort="${v}">
+        <span>${label}</span>${v === sort ? icon("check") : ""}</button>`).join("")}
+    </div>`;
+  dlg.showModal();
+  (dlg.querySelector('[aria-checked="true"]') || dlg.querySelector("[data-sort]")).focus();
+}
+$("#m-sort-btn").addEventListener("click", openSortSheet);
+$("#sort-sheet").addEventListener("click", (e) => {
+  const dlg = $("#sort-sheet");
+  if (e.target === dlg) return dlg.close();             // a tap outside the sheet
+  const b = e.target.closest("[data-sort]");
+  if (!b) return;
+  setSortKey(b.dataset.sort);
+  dlg.close();
+  loadItems();
+});
+$("#fab-add").addEventListener("click", () => openUploadDialog());
+
+// Phones: on the way down the list, the first header row slides away and only the search
+// row stays; on the way up it comes back. A line under the header shows there is more above.
+(() => {
+  const wrap = $(".table-wrap"), bar = $(".topbar");
+  let last = 0;
+  const expand = () => bar.classList.remove("collapsed");
+  wrap.addEventListener("scroll", () => {
+    if (!narrow.matches) return;
+    const y = wrap.scrollTop;
+    bar.classList.toggle("scrolled", y > 0);
+    if (document.activeElement === $("#search") || y <= 12) expand();
+    else if (y > last + 4) bar.classList.add("collapsed");
+    else if (y < last - 4) expand();
+    last = y;
+  }, { passive: true });
+  $("#search").addEventListener("focus", expand);
+  narrow.addEventListener("change", () => { bar.classList.remove("collapsed", "scrolled"); });
+})();
 
 $("#items-head").addEventListener("click", (e) => {
   const th = e.target.closest("th[data-sort]");
