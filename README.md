@@ -14,8 +14,13 @@ them from the browser.
   creates an entry for a paper without a PDF. Pasting a DOI, arXiv ID, `PMID:` or URL into the
   search box offers to add it instead of searching for it. Dropping PDFs anywhere on the window,
   or onto a collection in the sidebar, also opens the dialog. Bubo reads each PDF, looks for a
-  DOI or an arXiv stamp and fills in the metadata from Crossref or arXiv. If it finds neither,
-  it tries a title search and, as a last resort, uses the PDF's own metadata.
+  DOI or an arXiv stamp and fills in the metadata from Crossref or arXiv. If it finds neither
+  (older papers, scans), it searches Crossref as it would a reference, with the top of the
+  first page (journal, year, title, authors) and with the file name when it reads "Authors -
+  Year - Title", and only takes a result whose title is on that page, or in the file name,
+  and whose year and first author match. Papers that are not online at all (many book
+  chapters) get their title, authors and year from the file name. **Find metadata online**,
+  in a paper's menu, does the same search for papers already in your library.
 - **Supplementary information**: keep any number of SI files with a paper (PDFs,
   spreadsheets, data, videos…). In the upload dialog each file can be declared as a paper or
   as supplementary information for another PDF in the same upload, for the paper open in the
@@ -262,7 +267,12 @@ docker compose exec bubo python -m app.cli figures                 # papers with
 docker compose exec bubo python -m app.cli figures --all           # extract every paper's figures again
 docker compose exec bubo python -m app.cli figures --report        # papers without a figure, and why
 docker compose exec bubo python -m app.cli journal-abbreviations   # "Nat. Commun." etc., from Crossref
+docker compose exec bubo python -m app.cli find-metadata           # look online for papers without a DOI
+docker compose exec bubo python -m app.cli find-metadata --apply   # …and take what is found
 ```
+
+`find-metadata` looks for every paper without a DOI or arXiv ID as **Find metadata online**
+does, and lists what it finds; with `--apply` it takes it (and renames the PDFs to match).
 
 The first fills in the figures of papers added before figure extraction existed, and looks
 again at papers where an older version of Bubo found none; new papers get theirs

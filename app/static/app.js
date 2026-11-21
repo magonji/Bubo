@@ -1067,7 +1067,7 @@ function renderEditForm(item) {
                      : ["toread", "bookmark", "Add to reading list"],
         ["cite", "quote", "Copy citation"],
         ["bib", "braces", "Copy BibTeX"],
-        (item.doi || item.arxiv_id) && ["refresh", "refresh", "Refresh metadata"],
+        ["refresh", "refresh", item.doi || item.arxiv_id ? "Refresh metadata" : "Find metadata online"],
         item.deleted_at ? ["delete", "trash", "Delete for good", "danger"] : ["delete", "trash", "Move to the trash", "danger"],
       ].filter(Boolean).map(([a, ic, label, cls = ""]) =>
         `<button type="button" class="icon-btn ${cls}" data-a="${a}" data-tip="${label}" aria-label="${label}">${icon(ic)}</button>`).join("")}
@@ -1397,7 +1397,7 @@ function formatValue(field, v) {
 
 async function refreshMetadata(item) {
   if (state.formDirty && !confirm("This item has unsaved changes, which will be discarded. Continue?")) return;
-  const pending = toast("Looking up metadata…", false, 60000);
+  const pending = toast(item.doi || item.arxiv_id ? "Looking up metadata…" : "Looking for this paper online…", false, 60000);
   let preview;
   try { preview = await api(`/api/items/${item.id}/refresh-preview`); }
   finally { pending.remove(); }

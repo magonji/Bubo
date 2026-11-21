@@ -34,6 +34,23 @@ def _client() -> httpx.Client:
                         headers={"User-Agent": ua})
 
 
+def _search(url: str, params: dict) -> httpx.Response:
+    """A search request that waits and tries again (three times at most) when the service
+    says it is busy (429) or briefly unavailable (5xx), as Crossref does under load."""
+    import time
+    with _client() as c:
+        for attempt in range(4):
+            r = c.get(url, params=params)
+            if r.status_code not in (429, 500, 502, 503, 504) or attempt == 3:
+                r.raise_for_status()
+                return r
+            try:
+                wait = min(float(r.headers.get("Retry-After", "")), 30)
+            except ValueError:
+                wait = 2 * (attempt + 1)
+            time.sleep(wait)
+
+
 # --------------------------------------------------------------------------- #
 # Identifiers
 # --------------------------------------------------------------------------- #
@@ -173,10 +190,7 @@ def _norm_title(t: str) -> str:
 
 def search_crossref_title(title: str) -> dict | None:
     """Search by title, accepting a result only if the title is a near-exact match."""
-    with _client() as c:
-        r = c.get("https://api.crossref.org/works",
-                  params={"query.bibliographic": title, "rows": 5})
-    r.raise_for_status()
+    r = _search("https://api.crossref.org/works", {"query.bibliographic": title, "rows": 5})
     target = _norm_title(title)
     for m in r.json()["message"].get("items", []):
         cand = _norm_title(" ".join(m.get("title") or []))
@@ -407,8 +421,79 @@ def diff(current: dict, fetched: dict) -> list[dict]:
 # High-level workflows
 # --------------------------------------------------------------------------- #
 
-def identify_pdf(info: pdf.PdfInfo) -> dict | None:
-    """Try to work out a PDF's metadata from its contents."""
+# --------------------------------------------------------------------------- #
+# Papers without a DOI in the PDF (older papers, scans): the file name and the first page
+# --------------------------------------------------------------------------- #
+
+def parse_filename(name: str | None) -> dict:
+    """'Beake et al - 1994 - The kinetics of….pdf' → authors' family, year and title (file
+    names as reference managers write them: authors, year and title separated by dashes)."""
+    stem = re.sub(r"\.pdf$", "", (name or "").strip(), flags=re.I)
+    m = re.match(r"^(?P<who>[^\d]{2,120}?)\s+[-–_]+\s+(?P<year>(1[6-9]|20)\d\d)[a-z]?\s+[-–_]+\s+(?P<title>.{6,})$", stem)
+    if not m:
+        return {}
+    who = re.sub(r"\s+et\.?\s+al\.?$", "", m["who"].strip(), flags=re.I)
+    families = [f.strip() for f in re.split(r"\s*(?:,|&|\band\b|\by\b)\s*", who) if f.strip()]
+    return {"families": families, "year": int(m["year"]), "title": m["title"].strip(" .-_"),
+            "et_al": bool(re.search(r"et\.?\s+al", m["who"], re.I))}
+
+
+def _words(text: str) -> list[str]:
+    return [w for w in _norm_title(text or "").split() if len(w) > 2]
+
+
+def _title_in(title: str, text: str) -> bool:
+    """Whether a title appears in some text (an OCR'd first page: words may be jumbled)."""
+    words = _words(title)
+    if len(words) < 3:
+        return False
+    have = set(_words(text))
+    return sum(w in have for w in words) / len(words) >= 0.85
+
+
+def _title_like(found: str, hint: str) -> bool:
+    """A file name's title (often cut short) matches a found title, or its beginning."""
+    a, b = _norm_title(found), _norm_title(hint)
+    if not a or not b or len(b) < 12:
+        return False
+    return SequenceMatcher(None, a, b).ratio() >= 0.9 or SequenceMatcher(None, a[:len(b) + 2], b).ratio() >= 0.92
+
+
+def plausible(found: dict, text: str = "", hints: dict | None = None) -> bool:
+    """Whether metadata found by a search is this paper: its title is on the first page or
+    is the one in the file name, its year matches, and so does its first author."""
+    hints = hints or {}
+    title = found.get("title") or ""
+    if not (_title_in(title, text) or (hints.get("title") and _title_like(title, hints["title"]))):
+        return False
+    if hints.get("year") and found.get("year") and abs(found["year"] - hints["year"]) > 1:
+        return False
+    families = [_norm_title(a.get("family") or "") for a in found.get("authors") or []]
+    if hints.get("families"):
+        want = _norm_title(hints["families"][0])
+        if families and not any(want and (want == f or want in f.split()) for f in families[:3]):
+            return False
+    elif families and text and families[0] and families[0].split()[-1] not in _norm_title(text):
+        return False
+    return True
+
+
+def search_crossref_citation(query: str, text: str = "", hints: dict | None = None) -> dict | None:
+    """Crossref's search for references (a citation, a first page's heading…), keeping the
+    first result that is plausibly this paper."""
+    query = re.sub(r"\s+", " ", query).strip()[:600]
+    if len(query) < 15:
+        return None
+    r = _search("https://api.crossref.org/works", {"query.bibliographic": query, "rows": 5})
+    for m in r.json()["message"].get("items", []):
+        found = _crossref_to_meta(m)
+        if plausible(found, text, hints):
+            return found
+    return None
+
+
+def identify_pdf(info: pdf.PdfInfo, filename: str | None = None, hints: dict | None = None) -> dict | None:
+    """Try to work out a PDF's metadata from its contents (and its file name)."""
     first = info.pages[0] if info.pages else ""
     rest = "\n".join(info.pages[1:2])
     candidates: list[tuple[str, str]] = []
@@ -427,16 +512,62 @@ def identify_pdf(info: pdf.PdfInfo) -> dict | None:
             return fetch_crossref(value) if kind == "doi" else fetch_arxiv(value)
         except (MetadataError, httpx.HTTPError, ET.ParseError, KeyError, ValueError):
             continue
+    hints = hints or parse_filename(filename)
     for title in filter(None, [info.meta_title, info.guessed_title]):
         try:
-            if found := search_crossref_title(title):
+            if (found := search_crossref_title(title)) and plausible(found, first, hints):
+                return found
+        except (httpx.HTTPError, KeyError, ValueError):
+            pass
+    # Without a DOI (older papers, scans): search as a reference would be, with the top of the
+    # first page (journal, year, title, authors) and with what the file name says.
+    queries = [first[:500]]
+    if hints.get("title"):
+        queries.append(" ".join([", ".join(hints.get("families") or []), str(hints.get("year") or ""), hints["title"]]))
+    for q in queries:
+        try:
+            if found := search_crossref_citation(q, first, hints):
                 return found
         except (httpx.HTTPError, KeyError, ValueError):
             pass
     return None
 
 
+def find_for_item(item: dict, pdf_bytes: bytes | None = None) -> dict | None:
+    """Look online for a paper already in the library without a DOI: from its PDF (a DOI
+    inside, the top of the first page) and from its current title, first author and year."""
+    hints = {"title": item.get("title"), "year": item.get("year"),
+             "families": [a["family"] for a in item.get("authors") or [] if a.get("family")][:1]}
+    info = pdf.analyze(pdf_bytes) if pdf_bytes else pdf.PdfInfo()
+    return identify_pdf(info, hints=hints)
+
+
+def _given_on_page(first_page: str, family: str) -> str:
+    """'Julio' when the first page has 'Julio Casado' (the file name has only 'Casado')."""
+    m = re.search(r"\b((?:[A-ZÀ-Ý][\w'-]*\.?\s+){1,3})" + re.escape(family) + r"\b", first_page[:2500] or "")
+    given = re.sub(r"\s+", " ", m.group(1)).strip() if m else ""
+    return given if given and not re.search(r"(?i)^(the|by|and|of|in|for|dr|prof)\b", given) else ""
+
+
+def _title_line(first_page: str, title: str) -> str:
+    """The whole title as printed on the first page, when a file name has it cut short."""
+    want = _norm_title(title)
+    for line in (first_page or "").splitlines():
+        line = line.strip().rstrip(".")
+        if len(line) > len(title) and _norm_title(line).startswith(want):
+            return line
+    return title
+
+
 def fallback_meta(info: pdf.PdfInfo, filename: str) -> dict:
+    """What can be read without finding the paper online: the file name first (when it is
+    'Authors - Year - Title'), then the PDF's own details."""
+    named = parse_filename(filename)
+    if named:
+        first = info.pages[0] if info.pages else ""
+        authors = [{"given": _given_on_page(first, f), "family": f} for f in named["families"]]
+        return {"item_type": "misc", "title": _title_line(first, named["title"]), "authors": authors,
+                "year": named["year"]}
     title = info.meta_title or info.guessed_title or re.sub(r"\.pdf$", "", filename, flags=re.I)
     authors = []
     if info.meta_author:

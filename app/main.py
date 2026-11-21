@@ -376,7 +376,7 @@ def _upload(conn, files: list[UploadFile], collection_id: int | None) -> list[di
             results.append({"filename": name, "status": "duplicate", "id": dup})
             continue
         info = pdf.analyze(data)
-        meta = metadata.identify_pdf(info)
+        meta = metadata.identify_pdf(info, filename=name)
         identified = meta is not None
         meta = meta or metadata.fallback_meta(info, name)
         dup = db.find_duplicate(conn, doi=meta.get("doi"), arxiv_id=meta.get("arxiv_id"))
@@ -890,6 +890,17 @@ def delete_annotation(ann_id: int, conn: Conn):
     return {"ok": True}
 
 
+def find_metadata(conn, item: dict) -> dict | None:
+    row = conn.execute("SELECT file_name FROM items WHERE id = ?", (item["id"],)).fetchone()
+    data = None
+    if row and row["file_name"]:
+        try:
+            data = storage.abs_path(row["file_name"]).read_bytes()
+        except OSError:
+            pass
+    return metadata.find_for_item(item, data)
+
+
 @app.get("/api/items/{item_id}/refresh-preview", dependencies=[Auth])
 def refresh_preview(item_id: int, conn: Conn):
     """Re-fetch the metadata (DOI first, then arXiv ID) and list what would change.
@@ -903,7 +914,10 @@ def refresh_preview(item_id: int, conn: Conn):
         elif item.get("arxiv_id"):
             source, fetched = "arXiv", metadata.fetch_arxiv(item["arxiv_id"])
         else:
-            raise HTTPException(422, "The item has neither a DOI nor an arXiv ID")
+            source, fetched = "Crossref", find_metadata(conn, item)
+            if not fetched:
+                raise HTTPException(422, "Bubo could not find this paper online. Papers without a DOI "
+                                         "(many older ones, book chapters…) may not be listed anywhere.")
     except metadata.MetadataError as e:
         raise HTTPException(422, str(e))
     except httpx.HTTPError as e:

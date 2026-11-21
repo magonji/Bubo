@@ -266,7 +266,7 @@ def test_flat_readable_names(client, monkeypatch):
     assert not (main.settings.papers_dir / ".incoming").exists()
 
     # Same name → numbered; names are compared case-insensitively.
-    monkeypatch.setattr(metadata, "identify_pdf", lambda info: {
+    monkeypatch.setattr(metadata, "identify_pdf", lambda info, **kw: {
         "title": "a NEW title - part 1 2", "authors": [{"family": "lovelace"}, {"family": "turing"}],
         "year": 2022})
     client.post("/api/items/upload", files=[("files", ("y.pdf", make_pdf("Other"), "application/pdf"))])
@@ -455,7 +455,7 @@ def make_pages(*pages: str) -> bytes:
 def test_search_excerpts_and_page_matches(client, monkeypatch):
     login(client)
     from app import textsearch
-    monkeypatch.setattr(metadata, "identify_pdf", lambda info: {"title": "Owls of Europe", "year": 2020})
+    monkeypatch.setattr(metadata, "identify_pdf", lambda info, **kw: {"title": "Owls of Europe", "year": 2020})
     data = make_pages("Introduction. The eagle owl is large.\nIt hunts at night.",
                       "Methods. We ringed every Eurasian eagle owl we found.",
                       "Nothing to see here.")
@@ -515,7 +515,7 @@ def test_new_items_to_reading_list_and_queue_order(client, monkeypatch):
     import time
     for it in client.get("/api/items").json():
         client.delete(f"/api/items/{it['id']}?permanent=true")
-    monkeypatch.setattr(metadata, "identify_pdf", lambda info: None)
+    monkeypatch.setattr(metadata, "identify_pdf", lambda info, **kw: None)
     pdf_a, pdf_b = make_pdf("Paper A"), make_pdf("Paper B")
     r = client.post("/api/items/upload", data={"to_read": "true"},
                     files=[("files", ("a.pdf", pdf_a, "application/pdf"))]).json()["results"][0]
@@ -1291,3 +1291,34 @@ def test_merging_people_whose_names_are_misspelt(client):
     assert r.status_code == 409 and "different ORCID" in r.json()["detail"]
     for i in (one, two, three):
         client.delete(f"/api/items/{i['id']}?permanent=true")
+
+
+def test_papers_without_a_doi_found_by_first_page_and_file_name(monkeypatch):
+    from app import metadata, pdf
+    assert metadata.parse_filename("Beake et al - 1994 - The kinetics and mechanism of oxidation of hydroquinone.pdf") == {
+        "families": ["Beake"], "year": 1994, "title": "The kinetics and mechanism of oxidation of hydroquinone", "et_al": True}
+    assert metadata.parse_filename("Curie and Curie - 1898 - On a new radioactive substance.pdf")["families"] == ["Curie", "Curie"]
+    assert metadata.parse_filename("s41586-020-2649-2.pdf") == {}
+    first = ("J. CHEM. SOC. PERKIN TRANS. 2 1994 957 The Kinetics and Mechanism of Oxidation of Hydroquinone and\n"
+             "Chlorohydroquinone in the Presence of Nitrous Acid\nBen D. Beake, Roy B. Moodie and John P. B. Sandall")
+    right = {"title": "The kinetics and mechanism of oxidation of hydroquinone and chlorohydroquinone in the presence of nitrous acid",
+             "year": 1994, "authors": [{"given": "Ben D.", "family": "Beake"}], "doi": "10.1039/p29940000957"}
+    same_author = {"title": "Nitration and oxidation of 4-methoxyphenol by nitrous acid in aqueous acid solution",
+                   "year": 1994, "authors": [{"given": "B. D.", "family": "Beake"}], "doi": "10.1039/p29940000335"}
+    hints = metadata.parse_filename("Beake et al - 1994 - The kinetics and mechanism of oxidation of hydroquinone and chlorohydroquinone.pdf")
+    assert metadata.plausible(right, first, hints) and not metadata.plausible(same_author, first, hints)
+    assert not metadata.plausible({**right, "year": 2004}, first, hints)               # another year
+    queries = []
+    def fake_search(q, text="", h=None):
+        queries.append(q)
+        return right if metadata.plausible(right, text, h) else None
+    monkeypatch.setattr(metadata, "search_crossref_citation", fake_search)
+    monkeypatch.setattr(metadata, "search_crossref_title", lambda t: None)
+    info = pdf.PdfInfo(pages=[first])
+    assert metadata.identify_pdf(info, filename="Beake et al - 1994 - The kinetics.pdf")["doi"] == "10.1039/p29940000957"
+    assert queries[0].startswith("J. CHEM. SOC.")                                         # the top of the first page
+    # Not online at all: the file name, with the given name printed on the first page.
+    info = pdf.PdfInfo(pages=["Nitrosation of amino acids as a precursor of alkylation mechanisms.\nJulio Casado\nSalamanca"])
+    fb = metadata.fallback_meta(info, "Casado - 2007 - Nitrosation of amino acids as a precursor of alkylation mechanisms.pdf")
+    assert fb["title"] == "Nitrosation of amino acids as a precursor of alkylation mechanisms" and fb["year"] == 2007
+    assert fb["authors"] == [{"given": "Julio", "family": "Casado"}]

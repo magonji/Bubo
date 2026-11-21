@@ -14,7 +14,7 @@ import os
 import sys
 import time
 
-from . import db, figures, metadata
+from . import db, figures, metadata, storage
 
 REASONS = {
     "no-pdf": "No PDF attached: add one, or use Find PDF",
@@ -117,6 +117,44 @@ def cmd_journal_abbreviations(args) -> None:
     print(f"Done: {found} of {len(rows)} papers now have an abbreviation.")
 
 
+def cmd_find_metadata(args) -> None:
+    """Look online for papers without a DOI or arXiv ID (older papers, scans) and, with
+    --apply, take what is found."""
+    conn = db.connect()
+    rows = conn.execute("SELECT id, file_name FROM items WHERE IFNULL(doi, '') = '' AND IFNULL(arxiv_id, '') = '' "
+                        "AND deleted_at IS NULL ORDER BY id").fetchall()
+    if not rows:
+        print("Every paper has a DOI or an arXiv ID.")
+        return
+    found = 0
+    for n, r in enumerate(rows, 1):
+        item = db.get_item(conn, r["id"])
+        data = None
+        if r["file_name"]:
+            try:
+                data = storage.abs_path(r["file_name"]).read_bytes()
+            except OSError:
+                pass
+        label = f"[{n}/{len(rows)}] {(item['title'] or '(untitled)')[:60]}"
+        try:
+            meta = metadata.find_for_item(item, data)
+        except Exception as e:
+            print(f"{label}: failed ({e})")
+            continue
+        if not meta:
+            print(f"{label}: not found online")
+            continue
+        found += 1
+        changes = metadata.diff(item, meta)
+        print(f"{label}: found {meta.get('doi') or ''} “{(meta.get('title') or '')[:70]}” ({meta.get('year') or '?'})")
+        if args.apply and changes:
+            db.update_item(conn, r["id"], {c["field"]: c["new"] for c in changes})
+            storage.sync_item(conn, r["id"])
+        time.sleep(1)              # be gentle with Crossref
+    verb = "updated" if args.apply else "found (run again with --apply to take them)"
+    print(f"Done: {found} of {len(rows)} papers {verb}.")
+
+
 def main(argv=None) -> None:
     parser = argparse.ArgumentParser(prog="python -m app.cli", description="Bubo maintenance commands")
     sub = parser.add_subparsers(dest="command", required=True)
@@ -127,6 +165,9 @@ def main(argv=None) -> None:
     p.set_defaults(func=cmd_figures)
     p = sub.add_parser("journal-abbreviations", help="fetch abbreviated journal names from Crossref")
     p.set_defaults(func=cmd_journal_abbreviations)
+    p = sub.add_parser("find-metadata", help="look online for papers without a DOI (older papers, scans)")
+    p.add_argument("--apply", action="store_true", help="take what is found (otherwise, only list it)")
+    p.set_defaults(func=cmd_find_metadata)
     args = parser.parse_args(argv)
     _drop_privileges()
     db.init_db()

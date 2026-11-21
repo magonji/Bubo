@@ -98,7 +98,7 @@ function createPaperView(root, mode) {
           ${v.figures.length > 1 ? `<button type="button" role="menuitem" data-act="cover">${icon("image")} Set as cover figure</button>` : ""}
           <button type="button" role="menuitem" data-act="edit">${icon("pencil")} Edit details</button>
           <button type="button" role="menuitem" data-act="bib">${icon("braces")} Copy BibTeX</button>
-          ${i.doi || i.arxiv_id ? `<button type="button" role="menuitem" data-act="refresh">${icon("refresh")} Refresh metadata</button>` : ""}
+          <button type="button" role="menuitem" data-act="refresh">${icon("refresh")} ${i.doi || i.arxiv_id ? "Refresh metadata" : "Find metadata online"}</button>
           ${i.has_file && i.annotation_count ? `<button type="button" role="menuitem" data-act="annotated">${icon("download")} Download with annotations</button>` : ""}
           ${i.has_file ? `<a role="menuitem" href="/api/items/${i.id}/file?download=true">${icon("download")} Download the PDF</a>` : ""}
           <button type="button" role="menuitem" data-act="attach">${icon("paperclip")} ${i.has_file ? "Replace PDF" : "Attach PDF"}</button>
