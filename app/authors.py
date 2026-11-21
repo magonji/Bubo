@@ -327,6 +327,9 @@ def start() -> None:
                 n = run_pending(conn)
                 if n:
                     log.info("Found %s ORCID iDs of authors", n)
+                n = people.find_photos(conn)       # then their photos, if they have one
+                if n:
+                    log.info("Found %s photos of authors", n)
             except Exception:
                 log.exception("Looking for authors' ORCID iDs failed")
             finally:

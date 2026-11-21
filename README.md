@@ -61,8 +61,9 @@ them from the browser.
 - **A person's page** has their papers in your library (all their publications, for people
   you follow), their current position (from ORCID), citations, h-index and research topics
   (from OpenAlex, looked up when the page is first opened), a short description and Wikipedia
-  link (from Wikidata) and, for scientists with a picture on Wikimedia Commons, their photo;
-  for anyone else you can add one yourself (the camera button), or Bubo shows their initials.
+  link (from Wikidata) and, for scientists with a picture on Wikimedia Commons, their photo
+  (looked for in the background for every author with an ORCID iD, 50 at a time); for anyone
+  else you can add one yourself (the camera button), or Bubo shows their initials.
   On a paper's sheet every author links to their page, authors with a photo appear with it,
   and the people you follow stand out.
 - **Journals** gathers the journals your papers were published in as a shelf of covers, each

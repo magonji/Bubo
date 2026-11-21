@@ -317,6 +317,72 @@ def fetch_profile(orcid: str, family: str | None) -> dict:
     return p
 
 
+PHOTO_BATCH = 50             # ORCID iDs per Wikidata search (and entities per request)
+PHOTO_DAYS = 60              # how often to look again for someone without a photo
+
+
+def wikidata_photos(c: httpx.Client, orcids: list[str]) -> dict[str, tuple[str, str]]:
+    """For the ORCID iDs with a photo on Wikidata: (Wikidata id, Commons file name). Two
+    requests for up to 50 iDs: a search for any of them, then those entries' iDs and photos."""
+    r = c.get(WIKIDATA_API, params={"action": "query", "list": "search", "format": "json", "srlimit": 50,
+                                    "srsearch": "haswbstatement:" + "|".join(f"P496={o}" for o in orcids)})
+    r.raise_for_status()
+    ids = [h["title"] for h in r.json()["query"]["search"]]
+    if not ids:
+        return {}
+    r = c.get(WIKIDATA_API, params={"action": "wbgetentities", "ids": "|".join(ids[:50]), "format": "json", "props": "claims"})
+    r.raise_for_status()
+    wanted, out = set(orcids), {}
+    for qid, e in r.json().get("entities", {}).items():
+        claims = e.get("claims", {})
+        images = [x["mainsnak"].get("datavalue", {}).get("value") for x in claims.get("P18", [])]
+        images = [i for i in images if i]
+        for x in claims.get("P496", []):
+            orcid = x["mainsnak"].get("datavalue", {}).get("value")
+            if orcid in wanted and images and orcid not in out:
+                out[orcid] = (qid, images[0].replace(" ", "_"))
+    return out
+
+
+def find_photos(conn) -> int:
+    """Photos from Wikimedia Commons for authors with an ORCID iD, asked of Wikidata many
+    at a time (free, and nothing to do with OpenAlex's budget). Returns how many were found."""
+    stale = (_now() - timedelta(days=PHOTO_DAYS)).isoformat(timespec="seconds")
+    found = 0
+    while True:
+        rows = conn.execute(
+            "SELECT id, orcid FROM people WHERE orcid IS NOT NULL AND photo IS NULL "
+            "AND IFNULL(photo_source, '') NOT IN ('upload', 'removed') "
+            "AND (photo_looked IS NULL OR photo_looked < ?) ORDER BY id LIMIT ?", (stale, PHOTO_BATCH)).fetchall()
+        if not rows:
+            return found
+        stamp = _now().isoformat(timespec="seconds")
+        with _client() as c:
+            try:
+                photos = wikidata_photos(c, [r["orcid"] for r in rows])
+            except (httpx.HTTPError, ValueError, KeyError) as e:
+                log.warning("Wikidata photos: %s", e)
+                return found
+            for r in rows:
+                hit = photos.get(r["orcid"])
+                if hit:
+                    qid, file = hit
+                    try:
+                        img = c.get(f"https://commons.wikimedia.org/wiki/Special:FilePath/{file}", params={"width": 600})
+                        img.raise_for_status()
+                        name = save_photo(r["id"], img.content)
+                        conn.execute("UPDATE people SET photo = ?, photo_source = 'wikidata', photo_credit = ?, "
+                                     "wikidata_id = COALESCE(wikidata_id, ?) WHERE id = ?",
+                                     (name, f"https://commons.wikimedia.org/wiki/File:{file}", qid, r["id"]))
+                        found += 1
+                    except (httpx.HTTPError, PeopleError) as e:
+                        log.warning("Photo of person %s: %s", r["id"], e)
+                    time.sleep(0.5)            # be gentle with Wikimedia
+                conn.execute("UPDATE people SET photo_looked = ? WHERE id = ?", (stamp, r["id"]))
+        conn.commit()
+        time.sleep(1)
+
+
 def photo_dir():
     d = settings.data_dir / "people"
     d.mkdir(exist_ok=True)

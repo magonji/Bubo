@@ -1204,3 +1204,47 @@ def test_people_you_follow_stay_when_their_papers_are_deleted(client):
     assert names() == {"Fay Followed"} and client.get(f"/api/people/{nell}").status_code == 404
     client.delete(f"/api/people/{fay}")
     assert names() == set()
+
+
+def test_authors_photos_come_from_wikidata_in_batches(client, monkeypatch):
+    import io
+    from PIL import Image
+    from app import db, people
+    login(client)
+    item = client.post("/api/items", json={"title": "Famous", "authors": [{"given": "Ada", "family": "Lovelace"},
+                                                                        {"given": "Bo", "family": "Plain"}]}).json()
+    conn = db.connect()
+    ada, bo = [a["id"] for a in client.get(f"/api/items/{item['id']}/people").json()["authors"]]
+    conn.execute("UPDATE people SET orcid = '0000-0002-1825-0097' WHERE id = ?", (ada,))
+    conn.execute("UPDATE people SET orcid = '0000-0001-5109-3700' WHERE id = ?", (bo,))
+    conn.commit()
+    buf = io.BytesIO(); Image.new("RGB", (300, 400), "navy").save(buf, "JPEG")
+    calls = []
+    class Resp:
+        def __init__(self, data=None, content=b""): self._d, self.content = data, content
+        def raise_for_status(self): pass
+        def json(self): return self._d
+    class Fake:
+        def __enter__(self): return self
+        def __exit__(self, *a): pass
+        def get(self, url, params=None, **kw):
+            calls.append(params or {})
+            if params and params.get("list") == "search":
+                assert "P496=0000-0002-1825-0097|P496=0000-0001-5109-3700" in params["srsearch"]
+                return Resp({"query": {"search": [{"title": "Q7259"}]}})
+            if params and params.get("action") == "wbgetentities":
+                return Resp({"entities": {"Q7259": {"claims": {
+                    "P496": [{"mainsnak": {"datavalue": {"value": "0000-0002-1825-0097"}}}],
+                    "P18": [{"mainsnak": {"datavalue": {"value": "Ada Lovelace portrait.jpg"}}}]}}}})
+            return Resp(content=buf.getvalue())          # the photo itself
+    monkeypatch.setattr(people, "_client", lambda: Fake())
+    monkeypatch.setattr(people.time, "sleep", lambda s: None)
+    assert people.find_photos(conn) == 1
+    everyone = {p["id"]: p for p in client.get("/api/people", params={"scope": "all"}).json()["people"]}
+    assert everyone[ada]["photo_url"] and not everyone[bo]["photo_url"]
+    row = conn.execute("SELECT photo_credit, wikidata_id FROM people WHERE id = ?", (ada,)).fetchone()
+    assert row["photo_credit"].endswith("File:Ada_Lovelace_portrait.jpg") and row["wikidata_id"] == "Q7259"
+    n = len(calls)
+    assert people.find_photos(conn) == 0 and len(calls) == n       # not asked again for a while
+    conn.close()
+    client.delete(f"/api/items/{item['id']}?permanent=true")
