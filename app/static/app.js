@@ -796,13 +796,18 @@ function clickItem(e, item) {
   select(item);
   return false;
 }
-$(".table-wrap").addEventListener("click", (e) => {
-  if (narrow.matches || e.target.closest("tr, a[data-id], thead, button, input, select") || !state.selectedIds.size) return;
-  if (e.shiftKey || e.metaKey || e.ctrlKey) return;
+// Desktop: a click on an empty part of the list column (its heading included) or of the
+// sidebar clears the selection and shows the library overview. Clicks on papers, sidebar
+// entries, tags and controls keep doing their own thing.
+function clickOnEmpty(e) {
+  if (narrow.matches || !state.selectedIds.size || e.shiftKey || e.metaKey || e.ctrlKey) return;
+  if (e.target.closest("tr, th, [data-id], [data-view], [data-cid], .side-item, .side-head, .tag-cloud > *, button, a, input, select, label, .menu")) return;
   state.selectedIds = new Set();
   state.selected = null;
   renderSelection();
-});
+}
+$(".list").addEventListener("click", clickOnEmpty);
+$("#sidebar").addEventListener("click", clickOnEmpty);
 $("#items").addEventListener("dblclick", (e) => {
   const tr = e.target.closest("tr");
   const item = tr && state.items.find((i) => i.id === Number(tr.dataset.id));
