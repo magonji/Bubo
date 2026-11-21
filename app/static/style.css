@@ -896,6 +896,9 @@ input.switch:disabled { opacity: .5; cursor: default; }
     overflow: hidden; text-overflow: ellipsis; }
   .pv-back .icon { width: 26px; height: 26px; color: var(--text); }
   .pv-back span { overflow: hidden; text-overflow: ellipsis; }
+  /* The sheet fills the screen below the bar, and only its content scrolls. */
+  .pv-screen { flex: 1; min-height: 0; display: flex; flex-direction: column; }
+  .pv-scroll { min-height: 0; }
   .pv-scroll { flex: 1; overflow-y: auto; -webkit-overflow-scrolling: touch;
     padding: 14px 16px calc(32px + env(safe-area-inset-bottom)); }
 }
