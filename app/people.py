@@ -303,7 +303,9 @@ def fetch_profile(orcid: str, family: str | None) -> dict:
                 entities.sort(key=lambda e: not e.get("claims", {}).get("P18"))   # one with a photo first
                 e = entities[0]
                 p["wikidata_id"] = e.get("id")
-                p["description"] = (e.get("descriptions", {}).get("en") or {}).get("value")
+                desc = (e.get("descriptions", {}).get("en") or {}).get("value")
+                # Bots describe many scientists as "researcher ORCID ID = …": no description.
+                p["description"] = None if desc and re.search(r"orcid|\d{4}-\d{4}", desc, re.I) else desc
                 p["wikipedia"] = (e.get("sitelinks", {}).get("enwiki") or {}).get("title")
                 image = e.get("claims", {}).get("P18")
                 if image:
@@ -345,6 +347,10 @@ PROFILE_FIELDS = ["affiliation", "country", "role", "openalex_id", "works_count"
 def refresh_profile(conn, person_id: int) -> None:
     row = conn.execute("SELECT orcid, family_name, photo_source FROM people WHERE id = ?", (person_id,)).fetchone()
     if row is None:
+        return
+    if not row["orcid"]:               # without an iD there is nobody to look up
+        conn.execute("UPDATE people SET profile_checked = ? WHERE id = ?", (_now().isoformat(timespec="seconds"), person_id))
+        conn.commit()
         return
     p = fetch_profile(row["orcid"], row["family_name"])
     values = {k: p.get(k) for k in PROFILE_FIELDS if k in p}
@@ -419,22 +425,50 @@ def store_works(conn, person_id: int, works: list[dict]) -> int:
     return new
 
 
-def follow(conn, text: str) -> int:
+def follow(conn, text: str, person_id: int | None = None) -> int:
+    """Follow someone by their ORCID iD: an author already in the library (person_id, or the
+    person with that iD), or someone new. Their publications are fetched now."""
+    from . import authors
     orcid = normalise_orcid(text)
-    row = conn.execute("SELECT id FROM people WHERE orcid = ?", (orcid,)).fetchone()
-    if row:
+    row = conn.execute("SELECT id, followed FROM people WHERE orcid = ?", (orcid,)).fetchone()
+    if row and row["followed"]:
         raise PeopleError("You already follow that person")
     person = fetch_person(orcid)
     works = fetch_works(orcid, person["family"])
-    cur = conn.execute("INSERT INTO people (orcid, name, family_name, affiliation, added_at) VALUES (?, ?, ?, ?, ?)",
-                       (orcid, person["name"], person["family"], person["affiliation"],
-                        _now().isoformat(timespec="seconds")))
-    store_works(conn, cur.lastrowid, works)
+    given = person["name"][: -len(person["family"])].strip() if person["family"] else ""
+    values = (person["name"], person["family"], person["affiliation"], authors.name_key(given, person["family"]))
+    if row:                                   # an author with this iD
+        pid = row["id"]
+        if person_id and person_id != pid:    # the iD was typed for another row: they are one person
+            conn.execute("UPDATE OR IGNORE item_authors SET person_id = ? WHERE person_id = ?", (pid, person_id))
+            conn.execute("DELETE FROM people WHERE id = ?", (person_id,))
+    elif person_id and conn.execute("SELECT 1 FROM people WHERE id = ?", (person_id,)).fetchone():
+        pid = person_id                       # an author without an iD so far
+    elif (same := conn.execute("SELECT id FROM people WHERE orcid IS NULL AND name_key = ?",
+                               (values[3],)).fetchall()) and len(same) == 1:
+        pid = same[0]["id"]                   # the one author of that name in the library
+    else:
+        pid = conn.execute("INSERT INTO people (name, added_at) VALUES (?, ?)",
+                           (person["name"], _now().isoformat(timespec="seconds"))).lastrowid
+    conn.execute("UPDATE people SET orcid = ?, name = ?, family_name = ?, affiliation = COALESCE(affiliation, ?), "
+                 "name_key = ?, followed = 1 WHERE id = ?", (orcid, *values, pid))
+    # Papers in the library by someone of that name, known so far without an iD, are theirs.
+    authors.merge_by_name(conn)
+    store_works(conn, pid, works)
     try:
-        refresh_profile(conn, cur.lastrowid)
+        refresh_profile(conn, pid)
     except Exception:                     # a profile is a nicety: never fail to follow for it
         log.exception("Profile of %s", orcid)
-    return cur.lastrowid
+    return pid
+
+
+def unfollow(conn, person_id: int) -> None:
+    """Stop following: their publications go, they stay as an author of your papers."""
+    from . import authors
+    conn.execute("DELETE FROM person_works WHERE person_id = ?", (person_id,))
+    conn.execute("UPDATE people SET followed = 0, last_checked = NULL, last_error = NULL WHERE id = ?", (person_id,))
+    authors.drop_orphans(conn)
+    conn.commit()
 
 
 def refresh_person(conn, person_id: int, full: bool = False) -> int:
@@ -454,7 +488,7 @@ def refresh_person(conn, person_id: int, full: bool = False) -> int:
 def refresh_all(conn) -> int:
     new = 0
     stale = (_now() - timedelta(days=PROFILE_DAYS)).isoformat(timespec="seconds")
-    for (pid, checked) in conn.execute("SELECT id, profile_checked FROM people ORDER BY id").fetchall():
+    for (pid, checked) in conn.execute("SELECT id, profile_checked FROM people WHERE followed = 1 ORDER BY id").fetchall():
         try:
             new += refresh_person(conn, pid)
         except PeopleError as e:
@@ -486,21 +520,51 @@ def _work_dict(r, library: dict[str, int]) -> dict:
     return w
 
 
-def list_people(conn) -> list[dict]:
-    out = []
-    for r in conn.execute(
-            "SELECT p.*, (SELECT COUNT(*) FROM person_works w WHERE w.person_id = p.id) AS works, "
+def _person_dict(r) -> dict:
+    p = dict(r)
+    p["topics"] = json.loads(p.get("topics") or "[]")
+    p["followed"] = bool(p.get("followed"))
+    p["photo_url"] = (f"/api/people/{p['id']}/photo?v={(p.get('profile_checked') or '')[:19]}{p.get('photo_source') or ''}"
+                      if p.get("photo") else None)
+    return p
+
+
+_PAPERS = "(SELECT COUNT(DISTINCT a.item_id) FROM item_authors a WHERE a.person_id = p.id) AS papers"
+
+
+def list_people(conn, scope: str = "following", person_id: int | None = None) -> list[dict]:
+    """The people you follow (with their publications counted), or everyone: every author
+    in the library and everyone followed, those followed first, then by papers."""
+    if scope == "all":
+        rows = conn.execute(
+            f"SELECT p.id, p.orcid, p.name, p.family_name, p.followed, p.affiliation, p.photo, p.photo_source, "
+            f"p.profile_checked, p.topics, {_PAPERS}, "
+            "(SELECT COUNT(*) FROM person_works w WHERE w.person_id = p.id) AS works, "
+            "(SELECT COUNT(*) FROM person_works w WHERE w.person_id = p.id AND w.is_new = 1 "
+            " AND w.dismissed_at IS NULL AND w.seen_at IS NULL) AS unseen "
+            "FROM people p ORDER BY p.followed DESC, papers DESC, lower(p.family_name), lower(p.name)")
+        return [_person_dict(r) for r in rows]
+    where, params = ("p.id = ?", (person_id,)) if person_id is not None else ("p.followed = 1", ())
+    return [_person_dict(r) for r in conn.execute(
+            f"SELECT p.*, {_PAPERS}, (SELECT COUNT(*) FROM person_works w WHERE w.person_id = p.id) AS works, "
             "(SELECT COUNT(*) FROM person_works w WHERE w.person_id = p.id AND w.is_new = 1 "
             " AND w.dismissed_at IS NULL AND w.seen_at IS NULL) AS unseen, "
             "(SELECT COUNT(*) FROM person_works w WHERE w.person_id = p.id AND (w.item_id IS NOT NULL OR "
             " EXISTS (SELECT 1 FROM items i WHERE lower(i.doi) = w.doi))) AS in_library "
-            "FROM people p ORDER BY lower(p.name)"):
-        p = dict(r)
-        p["topics"] = json.loads(p.get("topics") or "[]")
-        p["photo_url"] = (f"/api/people/{p['id']}/photo?v={(p.get('profile_checked') or '')[:19]}{p.get('photo_source') or ''}"
-                          if p.get("photo") else None)
-        out.append(p)
-    return out
+            f"FROM people p WHERE {where} ORDER BY lower(p.name)", params)]
+
+
+def get_person(conn, person_id: int) -> dict | None:
+    rows = list_people(conn, person_id=person_id)
+    return rows[0] if rows else None
+
+
+def person_items(conn, person_id: int) -> list[dict]:
+    """Their papers in your library, newest first."""
+    return [dict(r) | {"authors": json.loads(r["authors"] or "[]")} for r in conn.execute(
+        "SELECT DISTINCT i.id, i.title, i.authors, i.venue, i.year, i.doi FROM item_authors a "
+        "JOIN items i ON i.id = a.item_id WHERE a.person_id = ? "
+        "ORDER BY i.year DESC NULLS LAST, i.added_at DESC", (person_id,))]
 
 
 def person_works(conn, person_id: int) -> list[dict]:
@@ -530,27 +594,14 @@ def radar(conn) -> list[dict]:
 
 
 def item_people(conn, item: dict) -> list[dict | None]:
-    """For each author of a paper, the followed person they are (or None).
-
-    An author is a followed person when the family names match and either the paper is
-    among that person's publications (same DOI) or the first initials match too."""
-    people = list_people(conn)
-    if not people or not item.get("authors"):
-        return [None] * len(item.get("authors") or [])
-    doi = (item.get("doi") or "").lower()
-    by_doi = {r[0] for r in conn.execute("SELECT person_id FROM person_works WHERE doi = ?", (doi,))} if doi else set()
-    out = []
-    for a in item["authors"]:
-        family, given = _plain(a.get("family")), _plain(a.get("given"))
-        match = None
-        for p in people:
-            if not family or _plain(p.get("family_name") or p["name"].split()[-1]) != family:
-                continue
-            p_given = _plain(p["name"].rsplit(" ", 1)[0]) if " " in p["name"] else ""
-            if p["id"] in by_doi or (given and p_given and given[0] == p_given[0]):
-                match = p
-                break
-        out.append(match and {"id": match["id"], "name": match["name"], "photo_url": match["photo_url"]})
+    """For each author of a paper, the person they are (authors.py links them), or None."""
+    out: list[dict | None] = [None] * len(item.get("authors") or [])
+    for r in conn.execute(
+            "SELECT a.pos, p.id, p.name, p.orcid, p.followed, p.photo, p.photo_source, p.profile_checked "
+            "FROM item_authors a JOIN people p ON p.id = a.person_id WHERE a.item_id = ?", (item["id"],)):
+        if r["pos"] < len(out):
+            p = _person_dict(r)
+            out[r["pos"]] = {k: p[k] for k in ("id", "name", "orcid", "followed", "photo_url")}
     return out
 
 

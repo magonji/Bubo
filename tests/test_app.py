@@ -912,7 +912,8 @@ def test_following_people_and_the_radar(client, monkeypatch):
     assert [w["title"] for w in client.get("/api/radar").json()["works"]] == ["Deep Learning for Everything"]
 
     assert client.delete(f"/api/people/{p['id']}").json() == {"ok": True}
-    assert client.get("/api/people").json() == {"people": [], "radar_unseen": 0}
+    r = client.get("/api/people").json()
+    assert r["people"] == [] and r["radar_unseen"] == 0
     for it in client.get("/api/items").json():
         client.delete(f"/api/items/{it['id']}")
 
@@ -1013,26 +1014,59 @@ def test_openalex_paging_is_frugal_and_keeps_what_it_has():
     assert len(calls) == 1 and calls[0]["per-page"] == 50 and "cursor" not in calls[0]
 
 
-def test_paper_authors_matched_to_people_followed(client, monkeypatch):
+def test_every_author_is_a_person_and_can_be_followed(client, monkeypatch):
     from app import people
     login(client)
-    monkeypatch.setattr(people, "fetch_person", lambda o: {"name": "Ada Lovelace", "family": "Lovelace", "affiliation": None})
-    monkeypatch.setattr(people, "fetch_works", lambda o, family=None, full=True: [
-        {"key": "doi:10.9/shared", "doi": "10.9/shared", "title": "Shared", "authors": [], "venue": None,
-         "pub_date": "2020", "type": "article", "url": None}])
+    names = {"0000-0002-1825-0097": ("Ada Lovelace", "Lovelace"), "0000-0001-5109-3700": ("Bertram Lovelace", "Lovelace")}
+    monkeypatch.setattr(people, "fetch_person", lambda o: {"name": names[o][0], "family": names[o][1], "affiliation": None})
+    monkeypatch.setattr(people, "fetch_works", lambda o, family=None, full=True: [])
     monkeypatch.setattr(people, "fetch_profile", lambda o, family=None: {})
-    p = client.post("/api/people", json={"orcid": "0000-0002-1825-0097"}).json()
-    by_doi = client.post("/api/items", json={"title": "Shared", "doi": "10.9/shared",
-        "authors": [{"given": "A.", "family": "Babbage"}, {"given": "", "family": "Lovelace"}]}).json()
-    by_name = client.post("/api/items", json={"title": "Other",
-        "authors": [{"given": "Ada", "family": "Lovelace"}, {"given": "Bert", "family": "Lovelace"}]}).json()
-    m = client.get(f"/api/items/{by_doi['id']}/people").json()["authors"]
-    assert m[0] is None and m[1]["id"] == p["id"]                     # matched through the DOI
-    m = client.get(f"/api/items/{by_name['id']}/people").json()["authors"]
-    assert m[0]["name"] == "Ada Lovelace" and m[1] is None              # a different Lovelace
-    client.delete(f"/api/people/{p['id']}")
-    for i in (by_doi, by_name):
+    a = client.post("/api/items", json={"title": "One", "authors": [{"given": "A.", "family": "Babbage"},
+                                                                     {"given": "Ada", "family": "Lovelace"}]}).json()
+    b = client.post("/api/items", json={"title": "Two", "authors": [{"given": "Ada", "family": "Lovelace"},
+                                                                     {"given": "Bert", "family": "Lovelace"}]}).json()
+    everyone = {p["name"]: p for p in client.get("/api/people", params={"scope": "all"}).json()["people"]}
+    assert set(everyone) == {"A. Babbage", "Ada Lovelace", "Bert Lovelace"}
+    assert everyone["Ada Lovelace"]["papers"] == 2 and not everyone["Ada Lovelace"]["followed"]
+    assert client.get("/api/people").json()["people"] == []                # nobody followed yet
+    m = client.get(f"/api/items/{b['id']}/people").json()["authors"]
+    assert m[0]["id"] == everyone["Ada Lovelace"]["id"] and m[1]["id"] == everyone["Bert Lovelace"]["id"]
+
+    # Following needs an iD: one typed for an author without one.
+    bert = everyone["Bert Lovelace"]["id"]
+    assert client.post(f"/api/people/{bert}/follow", json={}).status_code == 422
+    f = client.post(f"/api/people/{bert}/follow", json={"orcid": "0000-0001-5109-3700"}).json()
+    assert f["id"] == bert and f["followed"] and f["orcid"] == "0000-0001-5109-3700" and f["name"] == "Bertram Lovelace"
+    page = client.get(f"/api/people/{bert}").json()
+    assert [i["title"] for i in page["items"]] == ["Two"]
+    # Following Ada by her iD makes the author of both papers that person.
+    ada = client.post("/api/people", json={"orcid": "0000-0002-1825-0097"}).json()
+    assert ada["id"] == everyone["Ada Lovelace"]["id"] and ada["papers"] == 2
+    assert {p["name"] for p in client.get("/api/people").json()["people"]} == {"Ada Lovelace", "Bertram Lovelace"}
+
+    # Unfollowed, they stay as authors; without papers or a follow, people go.
+    client.delete(f"/api/people/{bert}")
+    assert not client.get(f"/api/people/{bert}").json()["followed"]
+    client.delete(f"/api/people/{ada['id']}")
+    for i in (a, b):
         client.delete(f"/api/items/{i['id']}")
+    assert client.get("/api/people", params={"scope": "all"}).json()["people"] == []
+
+
+def test_orcid_ids_go_only_to_authors_with_that_name():
+    from app import authors
+    paper = [{"given": "Stéfan J.", "family": "van der Walt"}, {"given": "Ralf", "family": "Gommers"},
+             {"given": "C.", "family": "Harris"}]
+    found = authors._assign(paper, [("Stéfan", "van der Walt", "0000-0001-9276-1891"),
+                                    ("Ralf", "Gommers", "0000-0002-0300-3333"),
+                                    ("Stephen", "Osewe", "0009-0009-0562-6196")])     # only cited it
+    assert found == 2 and [a.get("orcid") for a in paper] == ["0000-0001-9276-1891", "0000-0002-0300-3333", None]
+    # Two candidates for one name: neither is given.
+    one = [{"given": "J.", "family": "Smith"}]
+    assert authors._assign(one, [("John", "Smith", "0000-0002-1825-0097"), ("Jane", "Smith", "0000-0001-5109-3700")]) == 0
+    # Edited author lists keep the iDs found for the same names.
+    kept = authors.keep_orcids(paper, [{"given": "Ralf", "family": "Gommers"}, {"given": "New", "family": "Author"}])
+    assert kept[0]["orcid"] == "0000-0002-0300-3333" and "orcid" not in kept[1]
 
 
 def test_journals_gallery_and_profile(client, monkeypatch):

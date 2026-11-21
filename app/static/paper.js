@@ -144,15 +144,16 @@ function createPaperView(root, mode) {
     return `<div class="pv pv-${mode}">${bar}${pane ? body : `<div class="pv-scroll">${body}</div>`}</div>`;
   }
 
-  // Authors you follow and who have a photo come first, with their portraits; everyone
-  // else follows in the paper's order (people you follow link to their page).
+  // Authors with a photo come first, with their portraits; everyone else follows in the
+  // paper's order. Every author links to their page; those you follow stand out.
   function authorsHTML(i) {
     if (!i.authors.length) return "";
     const faces = [], rest = [];
     i.authors.forEach((a, n) => {
       const m = v.people[n], name = [a.given, a.family].filter(Boolean).join(" ");
       if (m?.photo_url) faces.push({ name, m });
-      else rest.push(m ? `<button type="button" class="pv-author-link" data-act="person" data-id="${m.id}">${esc(name)}</button>` : esc(name));
+      else rest.push(m ? `<button type="button" class="pv-author-link${m.followed ? " is-followed" : ""}" data-act="person" data-id="${m.id}"
+        title="${m.followed ? "You follow them" : "Their page"}">${esc(name)}</button>` : esc(name));
     });
     const SHORT = 6;
     const list = rest.length > SHORT
@@ -161,9 +162,10 @@ function createPaperView(root, mode) {
       : rest.join(", ");
     return `<div class="pv-authors">
       ${faces.length ? `<div class="pv-faces">${faces.map(({ name, m }) => `
-        <button type="button" class="pv-face" data-act="person" data-id="${m.id}" title="${esc(m.name)}: their page">
+        <button type="button" class="pv-face${m.followed ? " is-followed" : ""}" data-act="person" data-id="${m.id}" title="${esc(m.name)}: their page">
           ${avatarHTML({ name: m.name, photo_url: m.photo_url }, "avatar-face")}<span>${esc(name)}</span></button>`).join("")}</div>` : ""}
       ${rest.length ? `<p class="pv-author-list">${list}</p>` : ""}
+      ${v.people.some(Boolean) ? `<button type="button" class="pv-link pv-follow-authors" data-act="follow-authors">${icon("person-plus")} Follow authors</button>` : ""}
     </div>`;
   }
 
@@ -326,6 +328,8 @@ function createPaperView(root, mode) {
         el.textContent = open ? "fewer" : `and ${more.textContent.split(",").filter((s) => s.trim()).length} more`;
         return;
       }
+      case "follow-authors":
+        return openFollowAuthors(i, v.people, () => { loadSidebar(); render(i.id, { keepPlace: true }); });
       case "person": {
         const p = (state.people || []).find((x) => x.id === Number(el.dataset.id));
         if (!pane) closePaper();

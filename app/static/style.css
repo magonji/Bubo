@@ -1239,3 +1239,31 @@ body.works-view .list-tools { display: none; }
 .thumb .tile-fill img { width: 100%; height: 100%; max-width: none; max-height: none; object-fit: cover; }
 .jc-fig.jc-fill { padding: 0; }
 .jc-fig.jc-fill img { width: 100%; height: 100%; max-width: none; max-height: none; object-fit: cover; }
+
+/* People: every author; those you follow stand out */
+.pv-author-link:not(.is-followed) { color: inherit; text-decoration: none; }
+.pv-author-link:not(.is-followed):hover { color: var(--accent-strong); text-decoration: underline; }
+.pv-face.is-followed { border-color: var(--accent); }
+.pv-follow-authors { display: inline-flex; align-items: center; gap: 5px; margin-top: 6px; min-height: 0; padding: 0; font-size: 13px; }
+.pv-follow-authors .icon { width: 15px; height: 15px; }
+.people-tabs { display: flex; gap: 6px; padding: 12px 16px 0; }
+.people-tabs button { min-height: 32px; padding: 4px 12px; border: 1px solid var(--border); border-radius: 999px; background: none;
+  color: var(--text); font-size: 13px; }
+.people-tabs button span { color: var(--muted); margin-left: 3px; }
+.people-tabs button.active { background: var(--accent); border-color: var(--accent); color: #1A1205; }
+.people-tabs button.active span { color: #1A1205; opacity: .75; }
+.people-more { padding: 4px 16px 24px; text-align: center; }
+.pc-following { color: var(--accent) !important; padding: 5px !important; line-height: 0 !important; }
+.pc-following .icon { width: 14px; height: 14px; fill: none; }
+.ph-follow-note { font-size: 12.5px; align-self: center; }
+.fa-list { max-height: min(55vh, 460px); overflow-y: auto; margin: 10px -4px 6px; border-top: 1px solid var(--sep); }
+.fa-row { display: flex; align-items: center; gap: 10px; min-height: 44px; padding: 6px 4px; border-bottom: 1px solid var(--sep); cursor: pointer; }
+.fa-row input[type=checkbox] { flex: none; width: 18px; height: 18px; accent-color: var(--accent); }
+.fa-name { flex: 1; min-width: 0; font-size: 14px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.fa-orcid { flex: none; display: flex; align-items: center; gap: 6px; font-size: 12px; font-variant-numeric: tabular-nums; }
+.fa-orcid input { width: 150px; min-height: 32px; padding: 4px 8px; font-size: 12.5px; }
+@media (max-width: 760px), (hover: none) and (max-width: 1100px) {
+  .fa-row { flex-wrap: wrap; }
+  .fa-orcid { width: 100%; padding-left: 28px; }
+  .fa-orcid input { flex: 1; width: auto; font-size: 16px; }
+}

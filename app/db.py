@@ -108,16 +108,26 @@ CREATE TABLE IF NOT EXISTS figures (
 CREATE INDEX IF NOT EXISTS idx_figures_item ON figures(item_id, idx);
 
 -- Scientists followed by their ORCID iD (people.py) and their publications.
+-- Every author in the library (authors.py), and whether you follow them (people.py).
 CREATE TABLE IF NOT EXISTS people (
     id           INTEGER PRIMARY KEY,
-    orcid        TEXT NOT NULL UNIQUE,      -- 0000-0002-1825-0097
+    orcid        TEXT UNIQUE,               -- 0000-0002-1825-0097, when known
     name         TEXT NOT NULL,
     family_name  TEXT,                      -- to check OpenAlex's attributions
+    name_key     TEXT,                      -- 'garcia|m': tells apart people without an iD
+    followed     INTEGER NOT NULL DEFAULT 0,
     affiliation  TEXT,
     added_at     TEXT NOT NULL,
     last_checked TEXT,
     last_error   TEXT
 );
+CREATE TABLE IF NOT EXISTS item_authors (
+    item_id   INTEGER NOT NULL REFERENCES items(id) ON DELETE CASCADE,
+    pos       INTEGER NOT NULL,             -- position in the paper's author list
+    person_id INTEGER NOT NULL REFERENCES people(id) ON DELETE CASCADE,
+    PRIMARY KEY (item_id, pos)
+);
+CREATE INDEX IF NOT EXISTS idx_item_authors_person ON item_authors(person_id);
 CREATE TABLE IF NOT EXISTS person_works (
     id           INTEGER PRIMARY KEY,
     person_id    INTEGER NOT NULL REFERENCES people(id) ON DELETE CASCADE,
@@ -199,7 +209,7 @@ def init_db() -> None:
         conn.execute("ALTER TABLE figures ADD COLUMN fill INTEGER")
     # Profiles of followed people (people.py), added after the table itself.
     people_columns = {r["name"] for r in conn.execute("PRAGMA table_info(people)")}
-    for column in ["family_name", "country", "role", "openalex_id", "works_count INTEGER", "cited_by INTEGER",
+    for column in ["family_name", "name_key", "followed INTEGER NOT NULL DEFAULT 0", "country", "role", "openalex_id", "works_count INTEGER", "cited_by INTEGER",
                    "h_index INTEGER", "topics", "wikidata_id", "description", "wikipedia", "photo",
                    "photo_source", "photo_credit", "profile_checked"]:
         name, _, kind = column.partition(" ")
@@ -222,12 +232,49 @@ def init_db() -> None:
         ("figures_hash", "TEXT"),         # hash of the PDF the figures come from
         ("cover_figure_id", "INTEGER"),   # chosen thumbnail (NULL: the first figure)
         ("figures_version", "INTEGER"),   # figures.VERSION that produced them
+        ("authors_checked", "TEXT"),      # when authors' ORCID iDs were looked for (authors.py)
     ]:
         if column not in columns:
             conn.execute(f"ALTER TABLE items ADD COLUMN {column} {kind}")
     conn.commit()
     _unescape_stored(conn)
+    _people_for_all_authors(conn)
     conn.close()
+
+
+def _people_for_all_authors(conn) -> None:
+    """Libraries from before every author was a person: people were only those followed, and
+    their ORCID iD was required. Rebuild the table with the iD optional, then link every
+    paper's authors (the background thread then looks for their iDs)."""
+    from . import authors
+    notnull = {r["name"]: r["notnull"] for r in conn.execute("PRAGMA table_info(people)")}
+    if notnull.get("orcid"):
+        cols = [r["name"] for r in conn.execute("PRAGMA table_info(people)")]
+        conn.commit()
+        conn.execute("PRAGMA foreign_keys = OFF")
+        # SQLite's way: a new table, the rows copied, the old one dropped and the new renamed
+        # (so person_works keeps pointing at "people").
+        ddl = re.search(r"CREATE TABLE IF NOT EXISTS people \(.*?\n\);", SCHEMA, re.S).group(0)
+        conn.execute(ddl.replace("EXISTS people (", "EXISTS people_new (", 1))
+        new_cols = {r["name"] for r in conn.execute("PRAGMA table_info(people_new)")}
+        for c in cols:
+            if c not in new_cols:
+                conn.execute(f"ALTER TABLE people_new ADD COLUMN {c}")
+        listed = ", ".join(cols)
+        conn.execute(f"INSERT INTO people_new ({listed}) SELECT {listed} FROM people")
+        conn.execute("UPDATE people_new SET followed = 1")      # everyone there was followed
+        conn.execute("DROP TABLE people")
+        conn.execute("ALTER TABLE people_new RENAME TO people")
+        conn.commit()
+        conn.execute("PRAGMA foreign_keys = ON")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_people_key ON people(name_key)")
+    for r in conn.execute("SELECT id, name, family_name FROM people WHERE name_key IS NULL").fetchall():
+        given = r["name"][: -len(r["family_name"])].strip() if r["family_name"] and r["name"].endswith(r["family_name"]) else r["name"].rsplit(" ", 1)[0]
+        conn.execute("UPDATE people SET name_key = ? WHERE id = ?",
+                     (authors.name_key(given, r["family_name"] or r["name"].split()[-1]), r["id"]))
+    if conn.execute("SELECT 1 FROM items LIMIT 1").fetchone() and not conn.execute("SELECT 1 FROM item_authors LIMIT 1").fetchone():
+        authors.link_all(conn)
+    conn.commit()
 
 
 def get_db():
@@ -477,7 +524,8 @@ def _clean(meta: dict) -> dict:
         v = meta[k]
         if k == "authors":
             v = json.dumps([{"given": (a.get("given") or "").strip(),
-                             "family": (a.get("family") or "").strip()}
+                             "family": (a.get("family") or "").strip(),
+                             **({"orcid": a["orcid"]} if a.get("orcid") else {})}
                             for a in (v or []) if a.get("given") or a.get("family")],
                            ensure_ascii=False)
         elif k == "year":
@@ -514,12 +562,22 @@ def create_item(conn, meta: dict, file: dict | None = None, fulltext: str | None
     if collection_ids:
         set_collections(conn, item_id, collection_ids)
     reindex(conn, item_id, fulltext=fulltext or "")
+    from . import authors
+    authors.link_item(conn, item_id)
     conn.commit()
+    authors.kick()
     return item_id
 
 
 def update_item(conn, item_id: int, changes: dict) -> None:
+    from . import authors
+    if changes.get("authors") is not None:
+        old = conn.execute("SELECT authors FROM items WHERE id = ?", (item_id,)).fetchone()
+        changes = {**changes, "authors": authors.keep_orcids(json.loads(old["authors"] or "[]") if old else [],
+                                                            [dict(a) for a in changes["authors"]])}
     data = _clean(changes)
+    if "authors" in data or "doi" in data:
+        data["authors_checked"] = None      # look for the authors' iDs again
     if "citekey" in changes:
         key = re.sub(r"[^\w:\-.]", "", changes.get("citekey") or "")
         if key:
@@ -539,7 +597,11 @@ def update_item(conn, item_id: int, changes: dict) -> None:
     if "to_read" in changes:
         set_to_read(conn, item_id, bool(changes["to_read"]))
     reindex(conn, item_id)
+    if "authors" in data:
+        authors.link_item(conn, item_id)
     conn.commit()
+    if "authors_checked" in data:
+        authors.kick()
 
 
 def set_file(conn, item_id: int, file: dict, fulltext: str) -> None:
@@ -561,6 +623,8 @@ def delete_item(conn, item_id: int) -> list[str]:
     conn.execute("DELETE FROM items WHERE id = ?", (item_id,))
     conn.execute("DELETE FROM items_fts WHERE rowid = ?", (item_id,))
     conn.execute("DELETE FROM tags WHERE id NOT IN (SELECT tag_id FROM item_tags)")
+    from . import authors
+    authors.drop_orphans(conn)
     conn.commit()
     return files
 

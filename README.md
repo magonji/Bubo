@@ -42,26 +42,34 @@ them from the browser.
   related papers, with buttons to open the PDF, cite, file and share it. Papers without figures
   get a cover coloured from the journal's name. Bubo can be added to the home screen, where it
   opens like an app with the owl as its icon. On a computer the table stays as it is.
-- **Follow scientists** by their ORCID iD (the **+** next to "People" in the sidebar). Bubo
-  lists each person's publications, from their ORCID record and from OpenAlex, with an **Add**
-  button for those not yet in your library (by DOI they come in with full metadata and, when
-  there is one, an open-access PDF). Every 12 hours it looks for new ones: publications from
-  the last two months appear on the **Radar**, marked as new until you open it. OpenAlex
-  sometimes credits a paper to the wrong ORCID iD, so its papers only count when the name
-  printed on them matches the person's.
+- **People** shows everyone who wrote the papers in your library as a wall of portraits, like
+  a library of books or films, with the people you follow first. Each author's ORCID iD is
+  looked for in every way Bubo can: Crossref, OpenAlex (50 papers per request), the ORCID
+  records that list the paper, and the iDs printed or linked in the PDF. An iD is only given
+  to an author whose name matches it, as these records are sometimes wrong. This happens in
+  the background when you add a paper and, once, for the whole library. Authors with no iD
+  are told apart by family name and initial.
+- **Follow scientists** from a paper's author list (**Follow authors** on its sheet: tick
+  whoever you want, and paste an iD Bubo did not find), from their page, or anyone by their
+  ORCID iD (the **+** next to "Following" in the sidebar). Bubo lists each person's
+  publications, from their ORCID record and from OpenAlex, with an **Add** button for those
+  not yet in your library (by DOI they come in with full metadata and, when there is one, an
+  open-access PDF). Every 12 hours it looks for new ones: publications from the last two
+  months appear on the **Radar**, marked as new until you open it. OpenAlex sometimes credits
+  a paper to the wrong ORCID iD, so its papers only count when the name printed on them
+  matches the person's.
+- **A person's page** has their papers in your library (all their publications, for people
+  you follow), their current position (from ORCID), citations, h-index and research topics
+  (from OpenAlex, looked up when the page is first opened), a short description and Wikipedia
+  link (from Wikidata) and, for scientists with a picture on Wikimedia Commons, their photo;
+  for anyone else you can add one yourself (the camera button), or Bubo shows their initials.
+  On a paper's sheet every author links to their page, authors with a photo appear with it,
+  and the people you follow stand out.
 - **Journals** gathers the journals your papers were published in as a shelf of covers, each
   made from the figures of your latest papers in it. A journal's page lists your papers in it
   under its publisher, h-index, citations per article and open-access status (from OpenAlex,
   looked up when you open the page and kept for 30 days). The journal on a paper's sheet
   links to it.
-- **People** ("Everyone" under People in the sidebar) shows the scientists you follow as a wall
-  of portraits, like a library of books or films. Each person's page has their current
-  position (from ORCID), citations, h-index and research topics (from OpenAlex), a short
-  description and Wikipedia link (from Wikidata) and, for scientists with a picture on
-  Wikimedia Commons, their photo; for anyone else you can add one yourself (the camera
-  button), or Bubo shows their initials. On a paper's sheet, authors you follow appear with
-  their photo and link to their page (matched by the paper's DOI among their publications, or
-  by family name and initial); the other authors follow in a plain list.
 - **Find PDF** for papers without one (the dimmed icon in the PDF column, or the button in the
   item pane): looks on arXiv, Unpaywall (with `BUBO_CONTACT_EMAIL` set) and the publisher's page.
 - **The order you choose** (by year, date added, title or author) is remembered between visits.
@@ -231,6 +239,7 @@ If you use nginx, raise `client_max_body_size` (e.g. `200m`) so that large PDFs 
 | `BUBO_SECURE_COOKIES` | `true` when served over HTTPS. |
 | `BUBO_SESSION_DAYS` | Session length in days (default 30). |
 | `BUBO_RADAR_HOURS` | How often to look for new publications by the people you follow (default 12; 0 turns it off; "Check now" still works). |
+| `BUBO_ORCID_LOOKUP` | `1` (default) looks for the ORCID iDs of the authors of your papers in the background; `0` turns it off. |
 | `BUBO_OPENALEX_API_KEY` | Optional. Without a key, OpenAlex lets all requests from your IP address share a small free daily budget; Bubo asks for little, but a [free key](https://openalex.org/settings/api) gives you your own. |
 | `BUBO_SECRET` | Optional session key; otherwise one is generated in `data/.secret_key`. |
 
@@ -282,10 +291,11 @@ Layout:
 - `app/storage.py`: the `papers/` folder (readable names, renames, migration of older layouts)
 - `app/figures.py`: finds figures in PDFs and stores them as WebP thumbnails (PyMuPDF, Pillow)
 - `app/cli.py`: maintenance commands
-- `app/people.py`: following scientists by ORCID iD, and the radar (ORCID and OpenAlex APIs)
+- `app/authors.py`: every author as a person, and looking for their ORCID iDs
+- `app/people.py`: following scientists by ORCID iD, profiles and the radar (ORCID, OpenAlex and Wikidata APIs)
 - `docker-entrypoint.sh`: data-folder permissions, then drops privileges
 - `app/static/`: web interface (plain HTML/CSS/JS, no build step); `viewer.js` is the PDF viewer
-  and `paper.js` the paper screen on phones; `people.js` shows the people you follow and the radar
+  and `paper.js` the paper screen on phones; `people.js` shows people, the people you follow and the radar
 - `app/static/fonts/`: Fraunces (the name, titles on phones) and Inter (the phone layout),
   both under the SIL Open Font License
 - `app/static/vendor/pdfjs/`: [PDF.js](https://github.com/mozilla/pdf.js) 6.4.299 (Apache-2.0),

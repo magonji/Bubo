@@ -2,11 +2,13 @@
 
 import hmac
 import json
+import logging
 import re
 import mimetypes
 import time
 from urllib.parse import quote
 from pathlib import Path
+from datetime import datetime, timedelta, timezone
 from typing import Annotated, Literal
 
 import httpx
@@ -16,8 +18,10 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 from starlette.middleware.sessions import SessionMiddleware
 
-from . import annotate, bibtex, citation, db, figures, journals, metadata, pdf, people, storage, textsearch
+from . import annotate, authors, bibtex, citation, db, figures, journals, metadata, pdf, people, storage, textsearch
 from .config import settings
+
+log = logging.getLogger("bubo")
 
 STATIC = Path(__file__).parent / "static"
 
@@ -47,6 +51,8 @@ storage.sync_all(_startup_conn)
 settings.contact_email = db.get_settings(_startup_conn).get("contact_email") or settings.env_contact_email
 # Look for new publications by followed people every few hours (people.py).
 people.start_radar()
+# Look for the ORCID iDs of authors of new papers, and once of every paper (authors.py).
+authors.start()
 # Trim and classify figures extracted by earlier versions (figures.py).
 figures.start_analysing_saved()
 _startup_conn.close()
@@ -574,8 +580,13 @@ def _people_error(e: Exception):
 
 
 @app.get("/api/people", dependencies=[Auth])
-def list_people(conn: Conn):
-    return {"people": people.list_people(conn), "radar_unseen": people.radar_unseen(conn)}
+def list_people(conn: Conn, scope: str = "following"):
+    """The people you follow (the sidebar), or everyone (every author in the library)."""
+    out = {"people": people.list_people(conn, "all" if scope == "all" else "following"),
+           "radar_unseen": people.radar_unseen(conn)}
+    if scope != "all":
+        out["everyone"] = conn.execute("SELECT COUNT(*) FROM people").fetchone()[0]
+    return out
 
 
 @app.post("/api/people", dependencies=[Auth], status_code=201)
@@ -584,28 +595,61 @@ def follow_person(body: FollowIn, conn: Conn):
         pid = people.follow(conn, body.orcid)
     except (people.PeopleError, httpx.HTTPError) as e:
         raise _people_error(e)
-    return next(p for p in people.list_people(conn) if p["id"] == pid)
+    return _person_or_404(conn, pid)
 
 
 def _person_or_404(conn, person_id: int) -> dict:
-    p = next((p for p in people.list_people(conn) if p["id"] == person_id), None)
+    p = people.get_person(conn, person_id)
     if p is None:
-        raise HTTPException(404, "You do not follow that person")
+        raise HTTPException(404, "That person is not in your library")
     return p
 
 
 @app.get("/api/people/{person_id}", dependencies=[Auth])
 def get_person(person_id: int, conn: Conn):
-    return {**_person_or_404(conn, person_id), "works_list": people.person_works(conn, person_id)}
+    return {**_person_or_404(conn, person_id), "works_list": people.person_works(conn, person_id),
+            "items": people.person_items(conn, person_id)}
+
+
+class FollowPersonIn(BaseModel):
+    orcid: str | None = None     # needed when their iD is not known yet
+
+
+@app.post("/api/people/{person_id}/follow", dependencies=[Auth])
+def follow_author(person_id: int, body: FollowPersonIn, conn: Conn):
+    """Follow an author of your papers (by their iD, or one typed for them)."""
+    p = _person_or_404(conn, person_id)
+    orcid = body.orcid or p["orcid"]
+    if not orcid:
+        raise HTTPException(422, "Their ORCID iD is needed to follow them")
+    try:
+        pid = people.follow(conn, orcid, person_id=person_id)
+    except (people.PeopleError, httpx.HTTPError) as e:
+        raise _people_error(e)
+    return _person_or_404(conn, pid)
 
 
 @app.delete("/api/people/{person_id}", dependencies=[Auth])
 def unfollow_person(person_id: int, conn: Conn):
     _person_or_404(conn, person_id)
-    conn.execute("DELETE FROM people WHERE id = ?", (person_id,))
-    conn.commit()
-    people.delete_photo(person_id)
+    people.unfollow(conn, person_id)
+    if conn.execute("SELECT 1 FROM people WHERE id = ?", (person_id,)).fetchone() is None:
+        people.delete_photo(person_id)
     return {"ok": True}
+
+
+@app.post("/api/people/{person_id}/profile", dependencies=[Auth])
+def person_profile(person_id: int, conn: Conn, force: bool = False):
+    """Look up someone's profile (position, citations, photo) if it is a week old or more:
+    the people page asks when it is opened."""
+    p = _person_or_404(conn, person_id)
+    stale = (datetime.now(timezone.utc) - timedelta(days=people.PROFILE_DAYS)).isoformat(timespec="seconds")
+    if p["orcid"] and (force or not p.get("profile_checked") or p["profile_checked"] < stale):
+        try:
+            people.refresh_profile(conn, person_id)
+        except Exception as e:      # a profile is a nicety
+            log.warning("Profile of person %s: %s", person_id, e)
+    return _person_or_404(conn, person_id)
 
 
 @app.get("/api/people/{person_id}/photo", dependencies=[Auth])

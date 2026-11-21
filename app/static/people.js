@@ -6,7 +6,6 @@ Object.assign(ICONS, {
   person: '<circle cx="12" cy="8" r="3.6"/><path d="M5 20c.8-3.6 3.6-5.6 7-5.6s6.2 2 7 5.6"/>',
   "person-plus": '<circle cx="10" cy="8" r="3.6"/><path d="M3 20c.8-3.6 3.6-5.6 7-5.6 2 0 3.7.7 5 1.9M18 11v6M15 14h6"/>',
   "external-link": '<path d="M14 4h6v6M20 4l-9 9M18 14v5a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V7a1 1 0 0 1 1-1h5"/>',
-  people: '<circle cx="9" cy="8" r="3.2"/><path d="M3 19c.6-3.2 3-5 6-5s5.4 1.8 6 5"/><circle cx="17" cy="9" r="2.6"/><path d="M15.5 14.2c2.6-.4 4.8 1.1 5.5 4.3"/>',
   camera: '<path d="M4 8h3l2-2.5h6L17 8h3a1 1 0 0 1 1 1v9a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V9a1 1 0 0 1 1-1z"/><circle cx="12" cy="13" r="3.5"/>',
 });
 
@@ -39,19 +38,16 @@ function renderPeople() {
   $("#count-radar").classList.toggle("new", unseen > 0);
   $("#count-radar").title = unseen ? `${unseen} new publication${unseen > 1 ? "s" : ""}` : "";
   const people = state.people || [];
-  list.innerHTML = people.length ? `
-    <div class="side-item${state.view.type === "people" ? " active" : ""}" data-people title="Everyone you follow">
-      ${icon("people")}<span class="name">Everyone</span><span class="count">${people.length}</span></div>` +
-    people.map((p) => `
+  $("#count-people").textContent = state.everyone || "";
+  list.innerHTML = people.length ? people.map((p) => `
     <div class="side-item person-item${state.view.type === "person" && state.view.id === p.id ? " active" : ""}" data-person="${p.id}" title="ORCID ${esc(p.orcid)}">
       ${avatarHTML(p, "avatar-xs")}<span class="name">${esc(p.name)}</span>
       <span class="count${p.unseen ? " new" : ""}">${p.unseen || ""}</span>
     </div>`).join("")
-    : `<div class="side-empty muted">Follow scientists by their ORCID iD to see their publications.</div>`;
+    : `<div class="side-empty muted">Follow authors from a paper's author list, or anyone by their ORCID iD.</div>`;
 }
 
 $("#people").addEventListener("click", (e) => {
-  if (e.target.closest("[data-people]")) return setView({ type: "people" });
   const el = e.target.closest("[data-person]");
   if (!el) return;
   const p = state.people.find((x) => x.id === Number(el.dataset.person));
@@ -62,11 +58,17 @@ $("#add-person").addEventListener("click", (e) => { e.stopPropagation(); openFol
 // --------------------------------------------------------------------------
 // Following someone
 // --------------------------------------------------------------------------
-function openFollowDialog() {
+function orcidSearchLink(name) {
+  return `https://orcid.org/orcid-search/search?searchQuery=${encodeURIComponent(name)}`;
+}
+
+function openFollowDialog(person = null) {
   const dlg = $("#follow-dialog");
   dlg.innerHTML = `<form id="follow-form">
-    <h3 id="follow-title">Follow a scientist</h3>
-    <p class="muted">Enter their ORCID iD. Bubo lists their publications and, every few hours, looks for new ones to show on your radar.</p>
+    <h3 id="follow-title">${person ? `Follow ${esc(person.name)}` : "Follow a scientist"}</h3>
+    <p class="muted">${person
+      ? `Bubo has not found their ORCID iD, which it needs to follow them. <a href="${esc(orcidSearchLink(person.name))}" target="_blank" rel="noopener">Look for it on orcid.org</a> and paste it here.`
+      : "Enter their ORCID iD. Bubo lists their publications and, every few hours, looks for new ones to show on your radar."}</p>
     <div class="field"><label for="follow-orcid">ORCID iD</label>
       <input id="follow-orcid" placeholder="0000-0002-1825-0097 or https://orcid.org/…" autocomplete="off" required></div>
     <p class="error" id="follow-error" role="alert"></p>
@@ -82,7 +84,9 @@ function openFollowDialog() {
     btn.textContent = "Looking it up…";
     $("#follow-error").textContent = "";
     try {
-      const p = await api("/api/people", { json: { orcid: $("#follow-orcid").value } });
+      const orcid = $("#follow-orcid").value;
+      const p = person ? await api(`/api/people/${person.id}/follow`, { json: { orcid } })
+                       : await api("/api/people", { json: { orcid } });
       dlg.close();
       toast(`Following ${p.name}: ${p.works} publication${p.works === 1 ? "" : "s"}${p.unseen ? `, ${p.unseen} new` : ""}`);
       await loadSidebar();
@@ -106,16 +110,19 @@ async function loadWorks() {
   let works, person = null;
   try {
     if (v.type === "people") {
-      const r = await api("/api/people");
+      const r = await api("/api/people?scope=all");
       if (token !== worksState.token) return;
-      state.people = r.people;
+      peopleState.all = r.people;
       state.radarUnseen = r.radar_unseen;
       state.items = [];
       return renderPeoplePage();
     }
     if (v.type === "person") {
       person = await api(`/api/people/${v.id}`);
-      works = person.works_list;
+      // Someone followed: all their publications. Anyone else: their papers in your library.
+      works = person.followed ? person.works_list : person.items.map((i) => ({
+        id: `item-${i.id}`, title: i.title, authors: i.authors, venue: i.venue, pub_date: i.year ? String(i.year) : null,
+        doi: i.doi, in_library: true, item_id: i.id }));
     } else {
       works = (await api("/api/radar")).works;
     }
@@ -129,6 +136,15 @@ async function loadWorks() {
   worksState.person = person;
   state.items = [];
   renderWorks();
+  // A profile (position, citations, photo) is looked up when the page is first opened.
+  if (person?.orcid && isStale(person.profile_checked)) {
+    try {
+      const p = await api(`/api/people/${person.id}/profile`, { method: "POST" });
+      if (token !== worksState.token) return;
+      Object.assign(worksState.person, p);
+      renderWorks();
+    } catch {}
+  }
   // Opening the radar counts as having seen what is on it.
   if (v.type === "radar" && state.radarUnseen) {
     try {
@@ -139,6 +155,9 @@ async function loadWorks() {
     } catch {}
   }
 }
+
+const isStale = (iso) => !iso || Date.now() - new Date(iso) > 7 * 86400e3;
+const peopleState = { all: [], filter: "all", shown: 120 };
 
 function workMatches(w, q) {
   const text = `${w.title} ${w.venue || ""} ${(w.authors || []).map((a) => `${a.given} ${a.family}`).join(" ")}`.toLowerCase();
@@ -207,7 +226,7 @@ function renderWorks() {
   }
   const empty = radar
     ? ((state.people || []).length ? `<p class="works-empty muted">Nothing new for now.</p>` : "")
-    : `<p class="works-empty muted">${state.q ? "No publications match your search." : "No publications found on ORCID or OpenAlex."}</p>`;
+    : `<p class="works-empty muted">${state.q ? "No publications match your search." : p.followed ? "No publications found on ORCID or OpenAlex." : "None of their papers is in your library."}</p>`;
   $("#works").innerHTML = head + (works.length ? `<div class="works-list">${works.map((w) => workRow(w, radar)).join("")}</div>` : empty);
 }
 
@@ -215,13 +234,14 @@ function renderWorks() {
 function personHero(p) {
   const where = [p.role, p.affiliation, countryName(p.country)].filter(Boolean).join(" · ");
   const stats = [
-    [p.works, p.works === 1 ? "publication" : "publications"],
-    [p.in_library, "in your library"],
+    p.followed && [p.works, p.works === 1 ? "publication" : "publications"],
+    [p.followed ? p.in_library : p.papers, p.followed ? "in your library" : (p.papers === 1 ? "paper in your library" : "papers in your library")],
     p.cited_by != null && [bigNumber(p.cited_by), "citations"],
     p.h_index != null && [p.h_index, "h-index"],
   ].filter(Boolean);
   const links = [
-    `<a href="https://orcid.org/${esc(p.orcid)}" target="_blank" rel="noopener">ORCID</a>`,
+    p.orcid ? `<a href="https://orcid.org/${esc(p.orcid)}" target="_blank" rel="noopener">ORCID ${esc(p.orcid)}</a>`
+      : `<span>No ORCID iD found</span>`,
     p.openalex_id && `<a href="https://openalex.org/authors/${esc(p.openalex_id)}" target="_blank" rel="noopener">OpenAlex</a>`,
     p.wikipedia && `<a href="https://en.wikipedia.org/wiki/${encodeURIComponent(p.wikipedia.replace(/ /g, "_"))}" target="_blank" rel="noopener">Wikipedia</a>`,
     p.wikidata_id && `<a href="https://www.wikidata.org/wiki/${esc(p.wikidata_id)}" target="_blank" rel="noopener">Wikidata</a>`,
@@ -238,44 +258,56 @@ function personHero(p) {
       ${where ? `<p class="ph-where">${esc(where)}</p>` : ""}
       <div class="ph-stats">${stats.map(([n, l]) => `<span><b>${n}</b> ${l}</span>`).join("")}</div>
       ${p.topics?.length ? `<div class="ph-topics">${p.topics.map((t) => `<span>${esc(t)}</span>`).join("")}</div>` : ""}
-      <p class="ph-links muted">${links} · checked ${ago(p.last_checked)}${p.last_error ? ` · <span class="error">${esc(p.last_error)}</span>` : ""}
+      <p class="ph-links muted">${links}${p.followed ? ` · checked ${ago(p.last_checked)}` : ""}${p.last_error ? ` · <span class="error">${esc(p.last_error)}</span>` : ""}
         ${p.photo_source === "wikidata" && p.photo_credit ? ` · <a href="${esc(p.photo_credit)}" target="_blank" rel="noopener">Photo: Wikimedia Commons</a>` : ""}
         ${p.photo_url ? ` · <button type="button" class="link-btn" data-act="remove-photo">Remove photo</button>` : ""}</p>
-      <div class="works-buttons">
-        <button type="button" data-act="check">${icon("refresh")} Check now</button>
-        <button type="button" data-act="unfollow">Unfollow</button>
+      <div class="works-buttons">${p.followed
+        ? `<button type="button" data-act="check">${icon("refresh")} Check now</button>
+           <button type="button" data-act="unfollow">Unfollow</button>`
+        : `<button type="button" class="primary" data-act="follow-person">${icon("person-plus")} Follow</button>
+           <span class="muted ph-follow-note">${p.orcid ? "Their new publications will appear on your radar." : "Needs their ORCID iD."}</span>`}
       </div>
     </div>
   </div>`;
 }
 
-// Everyone followed, as a wall of portraits.
+// Everyone in the library, as a wall of portraits: those you follow first.
 function renderPeoplePage() {
-  const all = state.people || [];
+  const all = peopleState.all;
+  const following = all.filter((p) => p.followed);
+  const pool = peopleState.filter === "following" ? following : all;
   const q = (state.q || "").toLowerCase();
-  const people = q ? all.filter((p) => `${p.name} ${p.affiliation || ""} ${(p.topics || []).join(" ")}`.toLowerCase().includes(q)) : all;
+  const list = q ? pool.filter((p) => `${p.name} ${p.affiliation || ""} ${(p.topics || []).join(" ")}`.toLowerCase().includes(q)) : pool;
   document.body.classList.add("works-view");
   $(".table-wrap").classList.add("with-works");
   $("#cards").innerHTML = "";
   $("#empty").classList.add("hidden");
   $("#view-title").textContent = viewTitle();
-  $("#count").textContent = `${people.length} ${people.length === 1 ? "person" : "people"}`;
+  $("#count").textContent = `${list.length} ${list.length === 1 ? "person" : "people"}`;
   $("#m-title").textContent = sectionTitle();
-  $("#m-count").textContent = String(people.length);
+  $("#m-count").textContent = String(list.length);
   renderSidebar();
+  const shown = list.slice(0, peopleState.shown);
+  const tab = (key, label, n) => `<button type="button" role="tab" data-act="people-filter" data-filter="${key}"
+      aria-selected="${peopleState.filter === key}" class="${peopleState.filter === key ? "active" : ""}">${label} <span>${n}</span></button>`;
   $("#works").innerHTML = `<div class="works-head">
       <div><h2>${icon("people")} People</h2>
-        <p class="muted">${all.length ? "The scientists you follow. Their new publications appear on your radar." : "Follow scientists by their ORCID iD to keep up with what they publish."}</p></div>
-      <div class="works-buttons"><button type="button" class="primary" data-act="follow">${icon("person-plus")} Follow someone</button></div>
+        <p class="muted">${all.length ? "Everyone who wrote the papers in your library. Follow someone to see their new publications on your radar."
+          : "The authors of your papers appear here as you add them."}</p></div>
+      <div class="works-buttons"><button type="button" data-act="follow">${icon("person-plus")} Follow by ORCID iD</button></div>
     </div>
-    ${people.length ? `<div class="people-grid">${people.map((p) => `
-      <a class="person-card" href="#" data-person-card="${p.id}">
-        <span class="pc-photo">${avatarHTML(p, "avatar-card")}${p.unseen ? `<span class="badge badge-tl pc-new">${p.unseen} new</span>` : ""}</span>
+    <div class="people-tabs" role="tablist" aria-label="Who to show">${tab("all", "All", all.length)}${tab("following", "Following", following.length)}</div>
+    ${shown.length ? `<div class="people-grid">${shown.map((p) => `
+      <a class="person-card${p.followed ? " is-followed" : ""}" href="#" data-person-card="${p.id}">
+        <span class="pc-photo">${avatarHTML(p, "avatar-card")}${p.unseen ? `<span class="badge badge-tl pc-new">${p.unseen} new</span>`
+          : p.followed ? `<span class="badge badge-tl pc-following" title="You follow them">${icon("radar")}</span>` : ""}</span>
         <span class="pc-name">${esc(p.name)}</span>
         <span class="pc-where">${esc(p.affiliation || "")}</span>
-        <span class="pc-meta">${p.works} publication${p.works === 1 ? "" : "s"}${p.in_library ? ` · ${p.in_library} in your library` : ""}</span>
-      </a>`).join("")}</div>`
-      : all.length ? `<p class="works-empty muted">Nobody matches your search.</p>` : ""}`;
+        <span class="pc-meta">${p.followed ? `${p.works} publication${p.works === 1 ? "" : "s"} · ${p.papers} in your library`
+          : `${p.papers} paper${p.papers === 1 ? "" : "s"} in your library`}</span>
+      </a>`).join("")}</div>
+      ${list.length > shown.length ? `<div class="people-more"><button type="button" data-act="people-more">Show more (${list.length - shown.length} left)</button></div>` : ""}`
+      : `<p class="works-empty muted">${q ? "Nobody matches your search." : peopleState.filter === "following" ? "You do not follow anyone yet. Open a paper and choose authors to follow, or follow someone by their ORCID iD." : ""}</p>`}`;
 }
 
 // Leaving the works views: app.js renders the papers again.
@@ -289,7 +321,7 @@ $("#works").addEventListener("click", async (e) => {
   const card = e.target.closest("[data-person-card]");
   if (card) {
     e.preventDefault();
-    const p = state.people.find((x) => x.id === Number(card.dataset.personCard));
+    const p = peopleState.all.find((x) => x.id === Number(card.dataset.personCard));
     return p && setView({ type: "person", id: p.id, name: p.name });
   }
   const el = e.target.closest("[data-act]");
@@ -328,9 +360,25 @@ $("#works").addEventListener("click", async (e) => {
       await api(`/api/people/${p.id}`, { method: "DELETE" });
       toast(`No longer following ${p.name}`);
       await loadSidebar();
-      setView({ type: "radar" });
+      loadWorks();
     } else if (act === "follow") {
       openFollowDialog();
+    } else if (act === "people-filter") {
+      peopleState.filter = el.dataset.filter;
+      peopleState.shown = 120;
+      renderPeoplePage();
+    } else if (act === "people-more") {
+      peopleState.shown += 240;
+      renderPeoplePage();
+    } else if (act === "follow-person") {
+      const p = worksState.person;
+      if (!p.orcid) return openFollowDialog(p);
+      el.disabled = true;
+      el.innerHTML = "Looking up their publications…";
+      const r = await api(`/api/people/${p.id}/follow`, { json: {} });
+      toast(`Following ${r.name}: ${r.works} publication${r.works === 1 ? "" : "s"}`);
+      await loadSidebar();
+      loadWorks();
     } else if (act === "photo") {
       choosePhoto(worksState.person);
     } else if (act === "remove-photo") {
@@ -343,7 +391,7 @@ $("#works").addEventListener("click", async (e) => {
     }
   } catch (err) {
     toast(err.message, true);
-    if (act === "add" || act === "check") renderWorks();
+    if (["add", "check", "follow-person"].includes(act)) renderWorks();
   }
 });
 
@@ -364,4 +412,67 @@ function choosePhoto(p) {
     } catch (err) { toast(err.message, true); }
   };
   input.click();
+}
+
+// --------------------------------------------------------------------------
+// Choosing which authors of a paper to follow
+// --------------------------------------------------------------------------
+function openFollowAuthors(item, matches, done) {
+  const dlg = $("#follow-dialog");
+  const rows = item.authors.map((a, n) => ({ a, m: matches[n], name: [a.given, a.family].filter(Boolean).join(" ") }))
+    .filter((r) => r.m);
+  dlg.innerHTML = `<form id="fa-form">
+    <h3 id="follow-title">Follow authors</h3>
+    <p class="muted">Their new publications will appear on your radar. Following needs an ORCID iD: Bubo looks for
+      everyone's, and you can paste one it did not find.</p>
+    <div class="fa-list">${rows.map(({ m, name }, n) => `
+      <label class="fa-row">
+        <input type="checkbox" data-n="${n}" ${m.followed ? "checked" : ""}>
+        ${avatarHTML({ name: m.name, photo_url: m.photo_url }, "avatar-xs")}
+        <span class="fa-name">${esc(name)}</span>
+        ${m.orcid ? `<span class="fa-orcid muted">${esc(m.orcid)}</span>`
+          : `<span class="fa-orcid"><input type="text" data-orcid="${n}" placeholder="ORCID iD" aria-label="ORCID iD of ${esc(name)}"
+              autocomplete="off"><a href="${esc(orcidSearchLink(name))}" target="_blank" rel="noopener" title="Look for it on orcid.org">Find</a></span>`}
+      </label>`).join("")}</div>
+    <p class="error" id="fa-error" role="alert"></p>
+    <div class="dialog-buttons">
+      <button type="button" data-close>Cancel</button>
+      <button type="submit" class="primary" id="fa-submit">Save</button>
+    </div></form>`;
+  dlg.querySelector("[data-close]").addEventListener("click", () => dlg.close());
+  // Typing an iD ticks the box.
+  dlg.querySelectorAll("[data-orcid]").forEach((inp) => inp.addEventListener("input", () => {
+    dlg.querySelector(`input[type=checkbox][data-n="${inp.dataset.orcid}"]`).checked = !!inp.value.trim();
+  }));
+  $("#fa-form").addEventListener("submit", async (e) => {
+    e.preventDefault();
+    const btn = $("#fa-submit"), err = $("#fa-error");
+    const jobs = rows.map((r, n) => ({ ...r, on: dlg.querySelector(`input[type=checkbox][data-n="${n}"]`).checked,
+      orcid: dlg.querySelector(`[data-orcid="${n}"]`)?.value.trim() || null }))
+      .filter((j) => j.on !== j.m.followed);
+    const missing = jobs.find((j) => j.on && !j.m.orcid && !j.orcid);
+    if (missing) { err.textContent = `Paste ${missing.name}'s ORCID iD to follow them.`; return; }
+    if (!jobs.length) return dlg.close();
+    btn.disabled = true;
+    err.textContent = "";
+    const failed = [];
+    for (const [k, j] of jobs.entries()) {
+      btn.textContent = j.on ? `Following ${k + 1} of ${jobs.length}…` : `Saving ${k + 1} of ${jobs.length}…`;
+      try {
+        if (j.on) await api(`/api/people/${j.m.id}/follow`, { json: { orcid: j.orcid } });
+        else await api(`/api/people/${j.m.id}`, { method: "DELETE" });
+      } catch (x) { failed.push(`${j.name}: ${x.message}`); }
+    }
+    if (failed.length) {
+      err.textContent = failed.join(" · ");
+      btn.disabled = false;
+      btn.textContent = "Save";
+    } else {
+      dlg.close();
+      const n = jobs.filter((j) => j.on).length;
+      toast(n ? `Following ${n} more ${n === 1 ? "person" : "people"}` : "Saved");
+    }
+    done?.();
+  });
+  dlg.showModal();
 }

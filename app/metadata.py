@@ -122,6 +122,11 @@ def plain(s: str | None) -> str | None:
     return unescape(re.sub(r"\s+", " ", re.sub(r"<[^>]+>", "", s))).strip() or None
 
 
+def _orcid(value: str | None) -> str | None:
+    m = re.search(r"(\d{4}-\d{4}-\d{4}-\d{3}[\dX])", value or "", re.I)
+    return m.group(1).upper() if m else None
+
+
 def _crossref_to_meta(m: dict) -> dict:
     year = None
     for key in ("published-print", "published-online", "issued", "created"):
@@ -129,7 +134,8 @@ def _crossref_to_meta(m: dict) -> dict:
         if parts and parts[0] and parts[0][0]:
             year = parts[0][0]
             break
-    authors = [{"given": plain(a.get("given")) or "", "family": plain(a.get("family") or a.get("name")) or ""}
+    authors = [{"given": plain(a.get("given")) or "", "family": plain(a.get("family") or a.get("name")) or "",
+                **({"orcid": o} if (o := _orcid(a.get("ORCID"))) else {})}
                for a in m.get("author") or m.get("editor") or []]
     title = " ".join(m.get("title") or [""])
     subtitle = " ".join(m.get("subtitle") or [])
