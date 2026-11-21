@@ -114,6 +114,14 @@ def _strip_tags(s: str | None) -> str | None:
     return s or None
 
 
+def plain(s: str | None) -> str | None:
+    """Text without HTML: Crossref and publishers' pages send names like "Organic &amp;
+    Biomolecular Chemistry" (and now and then tags), which would otherwise be stored as such."""
+    if not s:
+        return s
+    return unescape(re.sub(r"\s+", " ", re.sub(r"<[^>]+>", "", s))).strip() or None
+
+
 def _crossref_to_meta(m: dict) -> dict:
     year = None
     for key in ("published-print", "published-online", "issued", "created"):
@@ -121,11 +129,8 @@ def _crossref_to_meta(m: dict) -> dict:
         if parts and parts[0] and parts[0][0]:
             year = parts[0][0]
             break
-    authors = [{"given": a.get("given", ""), "family": a.get("family") or a.get("name", "")}
-               for a in m.get("author", [])]
-    if not authors:
-        authors = [{"given": a.get("given", ""), "family": a.get("family") or a.get("name", "")}
-                   for a in m.get("editor", [])]
+    authors = [{"given": plain(a.get("given")) or "", "family": plain(a.get("family") or a.get("name")) or ""}
+               for a in m.get("author") or m.get("editor") or []]
     title = " ".join(m.get("title") or [""])
     subtitle = " ".join(m.get("subtitle") or [])
     if subtitle and subtitle.lower() not in title.lower():
@@ -135,12 +140,12 @@ def _crossref_to_meta(m: dict) -> dict:
         "title": _strip_tags(title) or "",
         "authors": authors,
         "year": year,
-        "venue": (m.get("container-title") or [None])[0],
-        "venue_short": (m.get("short-container-title") or [None])[0],
+        "venue": plain((m.get("container-title") or [None])[0]),
+        "venue_short": plain((m.get("short-container-title") or [None])[0]),
         "volume": m.get("volume"),
         "issue": m.get("issue"),
         "pages": (m.get("page") or "").replace("-", "–") or None,
-        "publisher": m.get("publisher"),
+        "publisher": plain(m.get("publisher")),
         "doi": m.get("DOI"),
         "url": m.get("URL"),
         "abstract": _strip_tags(m.get("abstract")),
@@ -339,16 +344,16 @@ def _meta_from_html(meta: dict[str, list[str]], page_title: str, url: str) -> di
     year = re.search(r"(19|20)\d{2}", date)
     return {
         "item_type": "article" if meta.get("citation_journal_title") else "misc",
-        "title": first("citation_title", "dc.title", "og:title") or page_title.strip(),
-        "authors": [_split_name(a) for a in
-                    meta.get("citation_author") or meta.get("dc.creator") or []],
+        "title": plain(first("citation_title", "dc.title", "og:title") or page_title.strip()) or "",
+        "authors": [_split_name(plain(a)) for a in
+                    meta.get("citation_author") or meta.get("dc.creator") or [] if plain(a)],
         "year": int(year.group(0)) if year else None,
-        "venue": first("citation_journal_title", "citation_conference_title", "og:site_name"),
+        "venue": plain(first("citation_journal_title", "citation_conference_title", "og:site_name")),
         "volume": first("citation_volume"),
         "issue": first("citation_issue"),
         "pages": "–".join(filter(None, [first("citation_firstpage"), first("citation_lastpage")]))
                  or None,
-        "publisher": first("citation_publisher", "dc.publisher"),
+        "publisher": plain(first("citation_publisher", "dc.publisher")),
         "url": url,
         "abstract": first("citation_abstract", "dc.description", "description"),
     }

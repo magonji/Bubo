@@ -1083,3 +1083,19 @@ def test_photographs_fill_their_tile_and_margins_are_trimmed():
         for j in range(8):
             d.rectangle([60 + i * 30, 20 + j * 30, 89 + i * 30, 49 + j * 30], fill=(255 - i * 20, 255 - j * 25, 200))
     assert figures.analyse(heat)[1] is False                 # flat blocks of colour: a diagram
+
+
+def test_html_entities_in_names_are_decoded(client):
+    from app import db, metadata
+    m = metadata._crossref_to_meta({"type": "journal-article", "title": ["Nitrones &amp; minoxidil"],
+        "container-title": ["Organic &amp; Biomolecular Chemistry"], "short-container-title": ["Org. Biomol. Chem."],
+        "publisher": "Royal Society of Chemistry (RSC)", "author": [{"given": "Mar&#237;a", "family": "Garc&iacute;a"}]})
+    assert m["venue"] == "Organic & Biomolecular Chemistry" and m["title"] == "Nitrones & minoxidil"
+    assert m["authors"] == [{"given": "María", "family": "García"}]
+    # Names stored with entities by earlier versions are fixed when the library opens.
+    login(client)
+    item = client.post("/api/items", json={"title": "Old", "venue": "Organic &amp; Biomolecular Chemistry"}).json()
+    db.init_db()
+    assert client.get(f"/api/items/{item['id']}").json()["venue"] == "Organic & Biomolecular Chemistry"
+    assert [i["id"] for i in client.get("/api/items", params={"q": "Biomolecular"}).json()] == [item["id"]]
+    client.delete(f"/api/items/{item['id']}")

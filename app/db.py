@@ -226,6 +226,7 @@ def init_db() -> None:
         if column not in columns:
             conn.execute(f"ALTER TABLE items ADD COLUMN {column} {kind}")
     conn.commit()
+    _unescape_stored(conn)
     conn.close()
 
 
@@ -599,6 +600,30 @@ def delete_supplementary(conn, supp_id: int) -> tuple[int, str] | None:
     reindex(conn, row["item_id"])
     conn.commit()
     return row["item_id"], row["file_name"]
+
+
+_ENTITY = re.compile(r"&(#\d+|#x[0-9a-fA-F]+|[a-zA-Z]+);")
+
+
+def _unescape_stored(conn) -> None:
+    """Names saved with HTML entities by earlier versions ("Organic &amp; Biomolecular
+    Chemistry", as Crossref sends them) are stored as plain text (once; cheap after that)."""
+    from html import unescape
+    fix = lambda v: unescape(v) if v and _ENTITY.search(v) else v
+    for r in conn.execute("SELECT id, title, venue, venue_short, publisher, authors FROM items "
+                          "WHERE title || IFNULL(venue, '') || IFNULL(venue_short, '') || IFNULL(publisher, '') "
+                          "|| IFNULL(authors, '') LIKE '%&%;%'").fetchall():
+        new = {k: fix(r[k]) for k in ("title", "venue", "venue_short", "publisher")}
+        authors = json.loads(r["authors"] or "[]")
+        authors = [{k: fix(v) if isinstance(v, str) else v for k, v in a.items()} for a in authors]
+        if any(new[k] != r[k] for k in new) or json.dumps(authors) != json.dumps(json.loads(r["authors"] or "[]")):
+            conn.execute("UPDATE items SET title = ?, venue = ?, venue_short = ?, publisher = ?, authors = ? WHERE id = ?",
+                         (new["title"], new["venue"], new["venue_short"], new["publisher"], json.dumps(authors), r["id"]))
+            reindex(conn, r["id"])
+    for r in conn.execute("SELECT id, title, venue FROM person_works WHERE title || IFNULL(venue, '') LIKE '%&%;%'").fetchall():
+        if fix(r["title"]) != r["title"] or fix(r["venue"]) != r["venue"]:
+            conn.execute("UPDATE person_works SET title = ?, venue = ? WHERE id = ?", (fix(r["title"]), fix(r["venue"]), r["id"]))
+    conn.commit()
 
 
 def reindex(conn, item_id: int, fulltext: str | None = None) -> None:

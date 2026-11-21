@@ -18,6 +18,7 @@ for scientists with a Wikidata entry, a description, a Wikipedia link and a phot
 Wikimedia Commons, kept in <data>/people. A photo can also be uploaded by hand.
 """
 
+import html
 import json
 import logging
 import re
@@ -160,13 +161,13 @@ def _orcid_works(c: httpx.Client, orcid: str) -> list[dict]:
                     if (x.get("external-id-type") or "").lower() == "doi"), None)
         pd = s.get("publication-date") or {}
         val = lambda k: ((pd.get(k) or {}).get("value"))
-        title = (((s.get("title") or {}).get("title") or {}).get("value") or "").strip()
+        title = html.unescape((((s.get("title") or {}).get("title") or {}).get("value") or "").strip())
         if not title:
             continue
         works.append({
             "key": f"doi:{doi}" if doi else f"orcid:{s.get('put-code')}",
             "doi": doi, "title": title, "authors": [],
-            "venue": ((s.get("journal-title") or {}).get("value")),
+            "venue": html.unescape((s.get("journal-title") or {}).get("value") or "") or None,
             "pub_date": _date(val("year"), val("month"), val("day")),
             "type": s.get("type"), "url": ((s.get("url") or {}).get("value")),
         })
