@@ -590,17 +590,66 @@ def unfollow_person(person_id: int, conn: Conn):
     _person_or_404(conn, person_id)
     conn.execute("DELETE FROM people WHERE id = ?", (person_id,))
     conn.commit()
+    people.delete_photo(person_id)
     return {"ok": True}
+
+
+@app.get("/api/people/{person_id}/photo", dependencies=[Auth])
+def person_photo(person_id: int, conn: Conn):
+    p = _person_or_404(conn, person_id)
+    path = p["photo"] and people.photo_dir() / p["photo"]
+    if not path or not path.exists():
+        raise HTTPException(404, "No photo")
+    return FileResponse(path, media_type="image/webp",
+                        headers={"Cache-Control": "private, max-age=31536000, immutable"})
+
+
+@app.post("/api/people/{person_id}/photo", dependencies=[Auth])
+def upload_person_photo(person_id: int, conn: Conn, file: UploadFile = File(...)):
+    _person_or_404(conn, person_id)
+    data = file.file.read(15 * 1024 * 1024 + 1)
+    if len(data) > 15 * 1024 * 1024:
+        raise HTTPException(413, "That image is too large (15 MB at most)")
+    try:
+        name = people.save_photo(person_id, data)
+    except people.PeopleError as e:
+        raise HTTPException(422, str(e))
+    conn.execute("UPDATE people SET photo = ?, photo_source = 'upload', photo_credit = NULL, "
+                 "profile_checked = ? WHERE id = ?", (name, db.now(), person_id))
+    conn.commit()
+    return _person_or_404(conn, person_id)
+
+
+@app.delete("/api/people/{person_id}/photo", dependencies=[Auth])
+def remove_person_photo(person_id: int, conn: Conn):
+    """Remove the photo, and do not fetch one from Wikidata again."""
+    _person_or_404(conn, person_id)
+    people.delete_photo(person_id)
+    conn.execute("UPDATE people SET photo = NULL, photo_source = 'removed', photo_credit = NULL WHERE id = ?",
+                 (person_id,))
+    conn.commit()
+    return _person_or_404(conn, person_id)
 
 
 @app.post("/api/people/{person_id}/refresh", dependencies=[Auth])
 def refresh_person(person_id: int, conn: Conn):
     _person_or_404(conn, person_id)
     try:
-        new = people.refresh_person(conn, person_id)
+        new = people.refresh_person(conn, person_id, full=True)   # the whole list, on request
     except (people.PeopleError, httpx.HTTPError) as e:
         raise _people_error(e)
+    try:
+        people.refresh_profile(conn, person_id)
+    except Exception:          # the works were refreshed; the profile can wait
+        pass
     return {"new": new, **_person_or_404(conn, person_id)}
+
+
+@app.get("/api/items/{item_id}/people", dependencies=[Auth])
+def item_people(item_id: int, conn: Conn):
+    """Which of the paper's authors are people you follow (with their photos)."""
+    item = _item_or_404(conn, item_id)
+    return {"authors": people.item_people(conn, item)}
 
 
 @app.get("/api/radar", dependencies=[Auth])

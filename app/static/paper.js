@@ -15,7 +15,7 @@ Object.assign(ICONS, {
 });
 
 function createPaperView(root, mode) {
-  const v = { root, mode, id: null, item: null, figures: [], index: 0, poll: null, notesTimer: null };
+  const v = { root, mode, id: null, item: null, figures: [], people: [], index: 0, poll: null, notesTimer: null };
   const pane = mode === "pane";
   const q = (sel) => root.querySelector(`.pv ${sel}`);
   const scroller = () => (pane ? root : root.querySelector(".pv-scroll"));
@@ -25,9 +25,10 @@ function createPaperView(root, mode) {
   // ------------------------------------------------------------------------
   async function render(id, { keepPlace = false, onGone = null } = {}) {
     clearTimeout(v.poll);
-    let item, figs;
+    let item, figs, matches;
     try {
-      [item, figs] = await Promise.all([api(`/api/items/${id}`), api(`/api/items/${id}/figures`)]);
+      [item, figs, matches] = await Promise.all([api(`/api/items/${id}`), api(`/api/items/${id}/figures`),
+        api(`/api/items/${id}/people`).then((r) => r.authors, () => [])]);
     } catch (err) {
       if (!keepPlace) toast("That paper is no longer in your library", true);
       onGone?.();
@@ -41,6 +42,7 @@ function createPaperView(root, mode) {
     v.id = id;
     v.item = item;
     v.figures = figs.figures;
+    v.people = matches || [];
     if (!sameFigures) v.index = Math.max(0, v.figures.findIndex((f) => f.id === figs.cover_id));
 
     root.innerHTML = sheetHTML(item, figs.status);
@@ -65,7 +67,6 @@ function createPaperView(root, mode) {
   function sheetHTML(i, figureStatus) {
     const back = $("#view-title").textContent || "My library";
     const venueYear = [i.venue, i.year].filter(Boolean).join(" · ");
-    const authorsAll = i.authors.map((a) => [a.given, a.family].filter(Boolean).join(" ")).join(", ");
     const canFind = !i.has_file && (i.doi || i.arxiv_id);
     const main = i.has_file ? ["open", "file", "Open PDF"] : canFind ? ["findpdf", "file-search", "Find PDF"] : ["attach", "paperclip", "Attach PDF"];
     const cols = state.collections.filter((c) => i.collections.includes(c.id));
@@ -116,9 +117,7 @@ function createPaperView(root, mode) {
       ${carouselHTML(i, figureStatus)}
       ${venueYear ? `<div class="pv-venue">${esc(venueYear)}</div>` : ""}
       <h1 class="pv-title" tabindex="-1">${esc(i.title) || "(untitled)"}</h1>
-      ${i.authors.length ? `<div class="pv-authors"><span>${esc(authorsShort(i.authors))}</span>
-        ${i.authors.length > 2 ? `<button type="button" class="pv-link" data-act="authors" aria-expanded="false">All authors</button>` : ""}</div>
-        <p class="pv-all-authors" hidden>${esc(authorsAll)}</p>` : ""}
+      ${authorsHTML(i)}
       <button type="button" class="pv-main primary" data-act="${main[0]}">${icon(main[1])} ${main[2]}</button>
       <div class="pv-actions${pane ? " two" : ""}">
         <button type="button" data-act="cite">${icon("quote")}<span>Cite</span></button>
@@ -142,6 +141,29 @@ function createPaperView(root, mode) {
         <div class="pv-saved muted" aria-live="polite"></div></section>
       <section class="pv-section pv-related hidden"><h2>More in your library</h2><div class="pv-strip"></div></section>`;
     return `<div class="pv pv-${mode}">${bar}${pane ? body : `<div class="pv-scroll">${body}</div>`}</div>`;
+  }
+
+  // Authors you follow and who have a photo come first, with their portraits; everyone
+  // else follows in the paper's order (people you follow link to their page).
+  function authorsHTML(i) {
+    if (!i.authors.length) return "";
+    const faces = [], rest = [];
+    i.authors.forEach((a, n) => {
+      const m = v.people[n], name = [a.given, a.family].filter(Boolean).join(" ");
+      if (m?.photo_url) faces.push({ name, m });
+      else rest.push(m ? `<button type="button" class="pv-author-link" data-act="person" data-id="${m.id}">${esc(name)}</button>` : esc(name));
+    });
+    const SHORT = 6;
+    const list = rest.length > SHORT
+      ? `${rest.slice(0, SHORT).join(", ")}<span class="pv-more-authors" hidden>, ${rest.slice(SHORT).join(", ")}</span>
+         <button type="button" class="pv-link pv-authors-more" data-act="authors" aria-expanded="false">and ${rest.length - SHORT} more</button>`
+      : rest.join(", ");
+    return `<div class="pv-authors">
+      ${faces.length ? `<div class="pv-faces">${faces.map(({ name, m }) => `
+        <button type="button" class="pv-face" data-act="person" data-id="${m.id}" title="${esc(m.name)}: their page">
+          ${avatarHTML({ name: m.name, photo_url: m.photo_url }, "avatar-face")}<span>${esc(name)}</span></button>`).join("")}</div>` : ""}
+      ${rest.length ? `<p class="pv-author-list">${list}</p>` : ""}
+    </div>`;
   }
 
   function carouselHTML(i, status) {
@@ -297,11 +319,16 @@ function createPaperView(root, mode) {
       case "expand": return openLightbox(v, "figure");
       case "all-figures": return openLightbox(v, "grid");
       case "authors": {
-        const p = q(".pv-all-authors"), open = p.hidden;
-        p.hidden = !open;
+        const more = q(".pv-more-authors"), open = more.hidden;
+        more.hidden = !open;
         el.setAttribute("aria-expanded", String(open));
-        el.textContent = open ? "Fewer authors" : "All authors";
+        el.textContent = open ? "fewer" : `and ${more.textContent.split(",").filter((s) => s.trim()).length} more`;
         return;
+      }
+      case "person": {
+        const p = (state.people || []).find((x) => x.id === Number(el.dataset.id));
+        if (!pane) closePaper();
+        return setView({ type: "person", id: Number(el.dataset.id), name: p?.name || el.textContent.trim() });
       }
       case "abstract": {
         const open = q(".pv-abstract").classList.toggle("open");

@@ -160,7 +160,7 @@ async function loadSidebar() {
 
 async function loadItems() {
   // A followed person's publications, or the radar (people.js).
-  if (state.view.type === "person" || state.view.type === "radar") return loadWorks();
+  if (["person", "radar", "people"].includes(state.view.type)) return loadWorks();
   leaveWorksView();
   const p = new URLSearchParams({ sort: sortKey() });
   if (state.q) p.set("q", state.q);
@@ -462,7 +462,7 @@ function authorsShort(a) {
 function sectionTitle() {
   const v = state.view;
   return { all: "My library", unfiled: "Unfiled items", toread: "Reading list",
-    collection: v.name, tag: `Tag: ${v.name}`, radar: "Radar", person: v.name }[v.type];
+    collection: v.name, tag: `Tag: ${v.name}`, radar: "Radar", person: v.name, people: "People" }[v.type];
 }
 function viewTitle() {
   return state.q ? `${sectionTitle()} — “${state.q}”` : sectionTitle();

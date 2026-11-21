@@ -22,6 +22,7 @@ class Settings:
     secure_cookies: bool
     session_days: int
     radar_hours: float = 12      # how often to look for new work by followed people (0: never)
+    openalex_api_key: str | None = None
 
     @property
     def db_path(self) -> Path:
@@ -68,6 +69,7 @@ def load_settings() -> Settings:
         secure_cookies=_bool(os.environ.get("BUBO_SECURE_COOKIES"), False),
         session_days=int(os.environ.get("BUBO_SESSION_DAYS", "30")),
         radar_hours=float(os.environ.get("BUBO_RADAR_HOURS", "12")),
+        openalex_api_key=os.environ.get("BUBO_OPENALEX_API_KEY") or None,
     )
 
 

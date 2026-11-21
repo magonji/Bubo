@@ -871,7 +871,8 @@ def test_following_people_and_the_radar(client, monkeypatch):
     ]
     monkeypatch.setattr(people, "fetch_person", lambda o: {"name": "Ada Lovelace", "family": "Lovelace",
                                                            "affiliation": "Analytical Engines"})
-    monkeypatch.setattr(people, "fetch_works", lambda o, family=None: list(works))
+    monkeypatch.setattr(people, "fetch_works", lambda o, family=None, full=True: list(works))
+    monkeypatch.setattr(people, "fetch_profile", lambda o, family=None: {})
 
     assert client.post("/api/people", json={"orcid": "0000-0002-1825-0098"}).status_code == 422
     p = client.post("/api/people", json={"orcid": "https://orcid.org/0000-0002-1825-0097"}).json()
@@ -936,3 +937,99 @@ def test_openalex_works_need_the_persons_name():
     titles = [w["title"] for w in people._openalex_works(Fake(), orcid, "Carberry")]
     assert titles == ["His paper", "Also his"]
     assert len(people._openalex_works(Fake(), orcid, None)) == 3      # no family name: keep all
+
+
+def test_people_profiles_and_photos(client, monkeypatch):
+    import io
+    from PIL import Image
+    from app import db, people
+    login(client)
+    def png(w, h, colour):
+        buf = io.BytesIO(); Image.new("RGB", (w, h), colour).save(buf, "PNG"); return buf.getvalue()
+    monkeypatch.setattr(people, "fetch_person", lambda o: {"name": "Martin Fenner", "family": "Fenner", "affiliation": None})
+    monkeypatch.setattr(people, "fetch_works", lambda o, family=None, full=True: [])
+    monkeypatch.setattr(people, "fetch_profile", lambda o, family=None: {
+        "affiliation": "Front Matter", "country": "DE", "role": "Founder", "works_count": 1056, "cited_by": 6811,
+        "h_index": 35, "topics": '["Open Access", "Scientometrics"]', "wikidata_id": "Q30532925",
+        "description": "German researcher", "photo_url": "https://commons.example/photo.jpg",
+        "photo_credit": "https://commons.example/File:photo.jpg"})
+    class FakeClient:                       # the photo download from Wikimedia Commons
+        def __enter__(self): return self
+        def __exit__(self, *a): pass
+        def get(self, url):
+            class R:
+                content = png(800, 600, "red")
+                def raise_for_status(self): pass
+            return R()
+    monkeypatch.setattr(people, "_client", lambda: FakeClient())
+
+    p = client.post("/api/people", json={"orcid": "0000-0003-1419-2405"}).json()
+    assert (p["affiliation"], p["role"], p["h_index"], p["topics"]) == ("Front Matter", "Founder", 35, ["Open Access", "Scientometrics"])
+    assert p["photo_source"] == "wikidata" and p["photo_url"]
+    photo = client.get(p["photo_url"])
+    assert photo.headers["content-type"] == "image/webp"
+    assert Image.open(io.BytesIO(photo.content)).size == (480, 600)          # cropped to a portrait
+
+    # An uploaded photo replaces it, and survives later profile updates.
+    up = client.post(f"/api/people/{p['id']}/photo", files={"file": ("me.png", png(300, 300, "blue"), "image/png")}).json()
+    assert up["photo_source"] == "upload"
+    people.refresh_profile(db.connect(), p["id"])
+    again = next(x for x in client.get("/api/people").json()["people"] if x["id"] == p["id"])
+    assert again["photo_source"] == "upload"
+    assert Image.open(io.BytesIO(client.get(again["photo_url"]).content)).getpixel((10, 10))[2] > 200   # still blue
+    assert client.post(f"/api/people/{p['id']}/photo", files={"file": ("x.txt", b"not an image", "text/plain")}).status_code == 422
+
+    # Removing it keeps Wikidata's from coming back.
+    gone = client.delete(f"/api/people/{p['id']}/photo").json()
+    assert gone["photo_url"] is None and gone["photo_source"] == "removed"
+    people.refresh_profile(db.connect(), p["id"])
+    assert next(x for x in client.get("/api/people").json()["people"] if x["id"] == p["id"])["photo_url"] is None
+    client.delete(f"/api/people/{p['id']}")
+    assert not (people.photo_dir() / f"{p['id']}.webp").exists()
+
+
+def test_openalex_paging_is_frugal_and_keeps_what_it_has():
+    import httpx
+    from app import people
+    calls = []
+    def page(n):
+        return {"meta": {"next_cursor": f"c{n}"}, "results": [
+            {"title": f"Work {n}-{i}", "doi": f"10.1/{n}.{i}", "id": f"W{n}{i}", "publication_date": "2026-01-01",
+             "authorships": []} for i in range(3)]}
+    class Fake:
+        def get(self, url, params=None):
+            calls.append(dict(params))
+            n = len(calls)
+            class R:
+                def raise_for_status(self):
+                    if n == 3:                 # the free daily budget runs out on the third page
+                        raise httpx.HTTPStatusError("401", request=None, response=None)
+                def json(self): return page(n)
+            return R()
+    works = people._openalex_works(Fake(), "0000-0002-1825-0097", None, full=True)
+    assert len(works) == 6 and len(calls) == 3                  # two pages kept
+    calls.clear()
+    people._openalex_works(Fake(), "0000-0002-1825-0097", None, full=False)
+    assert len(calls) == 1 and calls[0]["per-page"] == 50 and "cursor" not in calls[0]
+
+
+def test_paper_authors_matched_to_people_followed(client, monkeypatch):
+    from app import people
+    login(client)
+    monkeypatch.setattr(people, "fetch_person", lambda o: {"name": "Ada Lovelace", "family": "Lovelace", "affiliation": None})
+    monkeypatch.setattr(people, "fetch_works", lambda o, family=None, full=True: [
+        {"key": "doi:10.9/shared", "doi": "10.9/shared", "title": "Shared", "authors": [], "venue": None,
+         "pub_date": "2020", "type": "article", "url": None}])
+    monkeypatch.setattr(people, "fetch_profile", lambda o, family=None: {})
+    p = client.post("/api/people", json={"orcid": "0000-0002-1825-0097"}).json()
+    by_doi = client.post("/api/items", json={"title": "Shared", "doi": "10.9/shared",
+        "authors": [{"given": "A.", "family": "Babbage"}, {"given": "", "family": "Lovelace"}]}).json()
+    by_name = client.post("/api/items", json={"title": "Other",
+        "authors": [{"given": "Ada", "family": "Lovelace"}, {"given": "Bert", "family": "Lovelace"}]}).json()
+    m = client.get(f"/api/items/{by_doi['id']}/people").json()["authors"]
+    assert m[0] is None and m[1]["id"] == p["id"]                     # matched through the DOI
+    m = client.get(f"/api/items/{by_name['id']}/people").json()["authors"]
+    assert m[0]["name"] == "Ada Lovelace" and m[1] is None              # a different Lovelace
+    client.delete(f"/api/people/{p['id']}")
+    for i in (by_doi, by_name):
+        client.delete(f"/api/items/{i['id']}")

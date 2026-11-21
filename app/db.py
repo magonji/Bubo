@@ -187,6 +187,14 @@ def init_db() -> None:
     conn.executescript(SCHEMA)
     conn.execute(FTS_SCHEMA.format(name="items_fts"))
     fts_columns = {r["name"] for r in conn.execute("PRAGMA table_info(items_fts)")}
+    # Profiles of followed people (people.py), added after the table itself.
+    people_columns = {r["name"] for r in conn.execute("PRAGMA table_info(people)")}
+    for column in ["family_name", "country", "role", "openalex_id", "works_count INTEGER", "cited_by INTEGER",
+                   "h_index INTEGER", "topics", "wikidata_id", "description", "wikipedia", "photo",
+                   "photo_source", "photo_credit", "profile_checked"]:
+        name, _, kind = column.partition(" ")
+        if name not in people_columns:
+            conn.execute(f"ALTER TABLE people ADD COLUMN {name} {kind or 'TEXT'}")
     if "supplementary" not in fts_columns:
         # Libraries created before supplementary files: rebuild the index with the new column.
         conn.execute(FTS_SCHEMA.format(name="items_fts_new"))

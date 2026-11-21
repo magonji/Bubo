@@ -6,10 +6,27 @@ Object.assign(ICONS, {
   person: '<circle cx="12" cy="8" r="3.6"/><path d="M5 20c.8-3.6 3.6-5.6 7-5.6s6.2 2 7 5.6"/>',
   "person-plus": '<circle cx="10" cy="8" r="3.6"/><path d="M3 20c.8-3.6 3.6-5.6 7-5.6 2 0 3.7.7 5 1.9M18 11v6M15 14h6"/>',
   "external-link": '<path d="M14 4h6v6M20 4l-9 9M18 14v5a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V7a1 1 0 0 1 1-1h5"/>',
+  people: '<circle cx="9" cy="8" r="3.2"/><path d="M3 19c.6-3.2 3-5 6-5s5.4 1.8 6 5"/><circle cx="17" cy="9" r="2.6"/><path d="M15.5 14.2c2.6-.4 4.8 1.1 5.5 4.3"/>',
+  camera: '<path d="M4 8h3l2-2.5h6L17 8h3a1 1 0 0 1 1 1v9a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V9a1 1 0 0 1 1-1z"/><circle cx="12" cy="13" r="3.5"/>',
 });
 
+// A person's photo, or their initials on a colour taken from their name.
+function initials(name) {
+  const parts = (name || "?").replace(/[^\p{L}\s-]/gu, "").trim().split(/\s+/);
+  return ((parts[0] || "?")[0] + (parts.length > 1 ? parts.at(-1)[0] : "")).toUpperCase();
+}
+function avatarHTML(p, cls = "") {
+  return p.photo_url
+    ? `<span class="avatar ${cls}"><img src="${esc(p.photo_url)}" alt="" loading="lazy" decoding="async"></span>`
+    : `<span class="avatar avatar-initials ${cls}" style="--h:${journalHue(p.name || "")}" aria-hidden="true">${esc(initials(p.name))}</span>`;
+}
+const countryName = (code) => {
+  try { return code ? new Intl.DisplayNames(["en-GB"], { type: "region" }).of(code) : ""; } catch { return code || ""; }
+};
+const bigNumber = (n) => (n == null ? "" : n >= 10000 ? `${Math.round(n / 1000)}k` : n.toLocaleString("en-GB"));
+
 const worksState = { works: [], person: null, token: 0 };
-const isWorksView = () => state.view.type === "person" || state.view.type === "radar";
+const isWorksView = () => ["person", "radar", "people"].includes(state.view.type);
 
 // --------------------------------------------------------------------------
 // Sidebar: the Radar entry and the people followed
@@ -22,15 +39,19 @@ function renderPeople() {
   $("#count-radar").classList.toggle("new", unseen > 0);
   $("#count-radar").title = unseen ? `${unseen} new publication${unseen > 1 ? "s" : ""}` : "";
   const people = state.people || [];
-  list.innerHTML = people.length ? people.map((p) => `
+  list.innerHTML = people.length ? `
+    <div class="side-item${state.view.type === "people" ? " active" : ""}" data-people title="Everyone you follow">
+      ${icon("people")}<span class="name">Everyone</span><span class="count">${people.length}</span></div>` +
+    people.map((p) => `
     <div class="side-item person-item${state.view.type === "person" && state.view.id === p.id ? " active" : ""}" data-person="${p.id}" title="ORCID ${esc(p.orcid)}">
-      ${icon("person")}<span class="name">${esc(p.name)}</span>
+      ${avatarHTML(p, "avatar-xs")}<span class="name">${esc(p.name)}</span>
       <span class="count${p.unseen ? " new" : ""}">${p.unseen || ""}</span>
     </div>`).join("")
     : `<div class="side-empty muted">Follow scientists by their ORCID iD to see their publications.</div>`;
 }
 
 $("#people").addEventListener("click", (e) => {
+  if (e.target.closest("[data-people]")) return setView({ type: "people" });
   const el = e.target.closest("[data-person]");
   if (!el) return;
   const p = state.people.find((x) => x.id === Number(el.dataset.person));
@@ -84,6 +105,14 @@ async function loadWorks() {
   const v = state.view;
   let works, person = null;
   try {
+    if (v.type === "people") {
+      const r = await api("/api/people");
+      if (token !== worksState.token) return;
+      state.people = r.people;
+      state.radarUnseen = r.radar_unseen;
+      state.items = [];
+      return renderPeoplePage();
+    }
     if (v.type === "person") {
       person = await api(`/api/people/${v.id}`);
       works = person.works_list;
@@ -174,20 +203,79 @@ function renderWorks() {
         : `<button type="button" data-act="check">${icon("refresh")} Check now</button>`}</div>
     </div>`;
   } else {
-    head = `<div class="works-head">
-      <div><h2>${esc(p.name)}</h2>
-        <p class="muted">${p.affiliation ? `${esc(p.affiliation)} · ` : ""}<a href="https://orcid.org/${esc(p.orcid)}" target="_blank" rel="noopener">ORCID ${esc(p.orcid)}</a>
-          · checked ${ago(p.last_checked)}${p.last_error ? ` · <span class="error">${esc(p.last_error)}</span>` : ""}</p></div>
-      <div class="works-buttons">
-        <button type="button" data-act="check">${icon("refresh")} Check now</button>
-        <button type="button" data-act="unfollow">Unfollow</button>
-      </div>
-    </div>`;
+    head = personHero(p);
   }
   const empty = radar
     ? ((state.people || []).length ? `<p class="works-empty muted">Nothing new for now.</p>` : "")
     : `<p class="works-empty muted">${state.q ? "No publications match your search." : "No publications found on ORCID or OpenAlex."}</p>`;
   $("#works").innerHTML = head + (works.length ? `<div class="works-list">${works.map((w) => workRow(w, radar)).join("")}</div>` : empty);
+}
+
+// The top of a person's page: photo, position, figures, topics and links.
+function personHero(p) {
+  const where = [p.role, p.affiliation, countryName(p.country)].filter(Boolean).join(" · ");
+  const stats = [
+    [p.works, p.works === 1 ? "publication" : "publications"],
+    [p.in_library, "in your library"],
+    p.cited_by != null && [bigNumber(p.cited_by), "citations"],
+    p.h_index != null && [p.h_index, "h-index"],
+  ].filter(Boolean);
+  const links = [
+    `<a href="https://orcid.org/${esc(p.orcid)}" target="_blank" rel="noopener">ORCID</a>`,
+    p.openalex_id && `<a href="https://openalex.org/authors/${esc(p.openalex_id)}" target="_blank" rel="noopener">OpenAlex</a>`,
+    p.wikipedia && `<a href="https://en.wikipedia.org/wiki/${encodeURIComponent(p.wikipedia.replace(/ /g, "_"))}" target="_blank" rel="noopener">Wikipedia</a>`,
+    p.wikidata_id && `<a href="https://www.wikidata.org/wiki/${esc(p.wikidata_id)}" target="_blank" rel="noopener">Wikidata</a>`,
+  ].filter(Boolean).join(" · ");
+  return `<div class="person-hero">
+    <div class="ph-photo">
+      ${avatarHTML(p, "avatar-hero")}
+      <button type="button" class="ph-photo-btn" data-act="photo" aria-label="${p.photo_url ? "Change the photo" : "Add a photo"}"
+        title="${p.photo_url ? "Change the photo" : "Add a photo"}">${icon("camera")}</button>
+    </div>
+    <div class="ph-text">
+      <h2>${esc(p.name)}</h2>
+      ${p.description ? `<p class="ph-desc">${esc(p.description)}</p>` : ""}
+      ${where ? `<p class="ph-where">${esc(where)}</p>` : ""}
+      <div class="ph-stats">${stats.map(([n, l]) => `<span><b>${n}</b> ${l}</span>`).join("")}</div>
+      ${p.topics?.length ? `<div class="ph-topics">${p.topics.map((t) => `<span>${esc(t)}</span>`).join("")}</div>` : ""}
+      <p class="ph-links muted">${links} · checked ${ago(p.last_checked)}${p.last_error ? ` · <span class="error">${esc(p.last_error)}</span>` : ""}
+        ${p.photo_source === "wikidata" && p.photo_credit ? ` · <a href="${esc(p.photo_credit)}" target="_blank" rel="noopener">Photo: Wikimedia Commons</a>` : ""}
+        ${p.photo_url ? ` · <button type="button" class="link-btn" data-act="remove-photo">Remove photo</button>` : ""}</p>
+      <div class="works-buttons">
+        <button type="button" data-act="check">${icon("refresh")} Check now</button>
+        <button type="button" data-act="unfollow">Unfollow</button>
+      </div>
+    </div>
+  </div>`;
+}
+
+// Everyone followed, as a wall of portraits.
+function renderPeoplePage() {
+  const all = state.people || [];
+  const q = (state.q || "").toLowerCase();
+  const people = q ? all.filter((p) => `${p.name} ${p.affiliation || ""} ${(p.topics || []).join(" ")}`.toLowerCase().includes(q)) : all;
+  document.body.classList.add("works-view");
+  $(".table-wrap").classList.add("with-works");
+  $("#cards").innerHTML = "";
+  $("#empty").classList.add("hidden");
+  $("#view-title").textContent = viewTitle();
+  $("#count").textContent = `${people.length} ${people.length === 1 ? "person" : "people"}`;
+  $("#m-title").textContent = sectionTitle();
+  $("#m-count").textContent = String(people.length);
+  renderSidebar();
+  $("#works").innerHTML = `<div class="works-head">
+      <div><h2>${icon("people")} People</h2>
+        <p class="muted">${all.length ? "The scientists you follow. Their new publications appear on your radar." : "Follow scientists by their ORCID iD to keep up with what they publish."}</p></div>
+      <div class="works-buttons"><button type="button" class="primary" data-act="follow">${icon("person-plus")} Follow someone</button></div>
+    </div>
+    ${people.length ? `<div class="people-grid">${people.map((p) => `
+      <a class="person-card" href="#" data-person-card="${p.id}">
+        <span class="pc-photo">${avatarHTML(p, "avatar-card")}${p.unseen ? `<span class="badge badge-tl pc-new">${p.unseen} new</span>` : ""}</span>
+        <span class="pc-name">${esc(p.name)}</span>
+        <span class="pc-where">${esc(p.affiliation || "")}</span>
+        <span class="pc-meta">${p.works} publication${p.works === 1 ? "" : "s"}${p.in_library ? ` · ${p.in_library} in your library` : ""}</span>
+      </a>`).join("")}</div>`
+      : all.length ? `<p class="works-empty muted">Nobody matches your search.</p>` : ""}`;
 }
 
 // Leaving the works views: app.js renders the papers again.
@@ -198,6 +286,12 @@ function leaveWorksView() {
 }
 
 $("#works").addEventListener("click", async (e) => {
+  const card = e.target.closest("[data-person-card]");
+  if (card) {
+    e.preventDefault();
+    const p = state.people.find((x) => x.id === Number(card.dataset.personCard));
+    return p && setView({ type: "person", id: p.id, name: p.name });
+  }
   const el = e.target.closest("[data-act]");
   if (!el) return;
   const act = el.dataset.act;
@@ -237,9 +331,37 @@ $("#works").addEventListener("click", async (e) => {
       setView({ type: "radar" });
     } else if (act === "follow") {
       openFollowDialog();
+    } else if (act === "photo") {
+      choosePhoto(worksState.person);
+    } else if (act === "remove-photo") {
+      const p = worksState.person;
+      if (!confirm(`Remove ${p.name}'s photo? Bubo will not look for one on Wikidata again; you can still add one yourself.`)) return;
+      await api(`/api/people/${p.id}/photo`, { method: "DELETE" });
+      toast("Photo removed");
+      await loadSidebar();
+      loadWorks();
     }
   } catch (err) {
     toast(err.message, true);
     if (act === "add" || act === "check") renderWorks();
   }
 });
+
+// Choose a photo for a person: any image, cropped to a portrait.
+function choosePhoto(p) {
+  const input = $("#person-photo-input");
+  input.onchange = async () => {
+    const file = input.files[0];
+    input.value = "";
+    if (!file) return;
+    const fd = new FormData();
+    fd.append("file", file);
+    try {
+      await api(`/api/people/${p.id}/photo`, { method: "POST", body: fd });
+      toast("Photo updated");
+      await loadSidebar();
+      loadWorks();
+    } catch (err) { toast(err.message, true); }
+  };
+  input.click();
+}

@@ -49,6 +49,14 @@ them from the browser.
   the last two months appear on the **Radar**, marked as new until you open it. OpenAlex
   sometimes credits a paper to the wrong ORCID iD, so its papers only count when the name
   printed on them matches the person's.
+- **People** ("Everyone" under People in the sidebar) shows the scientists you follow as a wall
+  of portraits, like a library of books or films. Each person's page has their current
+  position (from ORCID), citations, h-index and research topics (from OpenAlex), a short
+  description and Wikipedia link (from Wikidata) and, for scientists with a picture on
+  Wikimedia Commons, their photo; for anyone else you can add one yourself (the camera
+  button), or Bubo shows their initials. On a paper's sheet, authors you follow appear with
+  their photo and link to their page (matched by the paper's DOI among their publications, or
+  by family name and initial); the other authors follow in a plain list.
 - **Find PDF** for papers without one (the dimmed icon in the PDF column, or the button in the
   item pane): looks on arXiv, Unpaywall (with `BUBO_CONTACT_EMAIL` set) and the publisher's page.
 - **The order you choose** (by year, date added, title or author) is remembered between visits.
@@ -218,6 +226,7 @@ If you use nginx, raise `client_max_body_size` (e.g. `200m`) so that large PDFs 
 | `BUBO_SECURE_COOKIES` | `true` when served over HTTPS. |
 | `BUBO_SESSION_DAYS` | Session length in days (default 30). |
 | `BUBO_RADAR_HOURS` | How often to look for new publications by the people you follow (default 12; 0 turns it off; "Check now" still works). |
+| `BUBO_OPENALEX_API_KEY` | Optional. Without a key, OpenAlex lets all requests from your IP address share a small free daily budget; Bubo asks for little, but a [free key](https://openalex.org/settings/api) gives you your own. |
 | `BUBO_SECRET` | Optional session key; otherwise one is generated in `data/.secret_key`. |
 
 ### Maintenance commands
