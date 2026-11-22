@@ -40,7 +40,10 @@ log = logging.getLogger("bubo.people")
 ORCID_API = "https://pub.orcid.org/v3.0"
 OPENALEX_API = "https://api.openalex.org"
 WIKIDATA_API = "https://www.wikidata.org/w/api.php"
-PROFILE_DAYS = 7              # how often a profile is looked up again
+def profile_days() -> float:
+    """How often a profile (affiliation, h-index, photo…) is looked at again: every few days
+    for everyone (BUBO_PROFILE_DAYS, 3 by default)."""
+    return settings.profile_days
 PHOTO_SIZE = (480, 600)       # portrait, 4:5
 NEW_DAYS = 60                 # how recent a work must be to count as news
 TIMEOUT = 20.0
@@ -333,7 +336,7 @@ def fetch_profile(orcid: str, family: str | None) -> dict:
 
 
 PHOTO_BATCH = 50             # people per OpenAlex or Wikidata request
-PROFILE_REFRESH_DAYS = 30    # how often every author's profile is looked at again
+
 
 
 def wikidata_entries(c: httpx.Client, orcids: list[str]) -> dict[str, dict]:
@@ -371,8 +374,8 @@ def fill_profiles(conn) -> int:
     citation figures, topics and affiliation from OpenAlex (50 people per request, by ORCID
     iD or OpenAlex id), current position from ORCID (one free request each), and description,
     Wikipedia and photo from Wikidata (50 per request). Each is looked at again after
-    PROFILE_REFRESH_DAYS. Returns how many profiles were filled in."""
-    stale = (_now() - timedelta(days=PROFILE_REFRESH_DAYS)).isoformat(timespec="seconds")
+    profile_days(). Returns how many profiles were filled in."""
+    stale = (_now() - timedelta(days=profile_days())).isoformat(timespec="seconds")
     done = 0
     while True:
         rows = conn.execute(
@@ -608,7 +611,7 @@ def refresh_person(conn, person_id: int, full: bool = False) -> int:
 
 def refresh_all(conn) -> int:
     new = 0
-    stale = (_now() - timedelta(days=PROFILE_DAYS)).isoformat(timespec="seconds")
+    stale = (_now() - timedelta(days=profile_days())).isoformat(timespec="seconds")
     for (pid, checked) in conn.execute("SELECT id, profile_checked FROM people WHERE followed = 1 ORDER BY id").fetchall():
         try:
             new += refresh_person(conn, pid)

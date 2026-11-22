@@ -156,8 +156,8 @@ async function loadWorks() {
   }
 }
 
-// The server decides (a week for people followed, a month for others); this only skips asking.
-const isStale = (iso) => !iso || Date.now() - new Date(iso) > 7 * 86400e3;
+// The server decides (every few days, BUBO_PROFILE_DAYS); this only skips asking for a fresh one.
+const isStale = (iso) => !iso || Date.now() - new Date(iso) > 86400e3;
 const peopleState = { all: [], filter: "all", shown: 120, view: "grid", sort: { key: "", dir: 1 } };
 try { peopleState.view = localStorage.getItem("peopleView") === "table" ? "table" : "grid"; } catch {}
 

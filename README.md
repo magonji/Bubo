@@ -71,7 +71,8 @@ them from the browser.
   (the camera button), or Bubo shows their initials. All this is filled in in the background
   for every author OpenAlex or ORCID knows, so it is in People without opening anyone's page:
   OpenAlex and Wikidata are asked about 50 people at a time, ORCID one by one, and profiles
-  are renewed monthly (weekly for people you follow).
+  are renewed every three days (`BUBO_PROFILE_DAYS`), so affiliations and h-indexes stay
+  current.
   On a paper's sheet every author links to their page, authors with a photo appear with it,
   and the people you follow stand out.
 - **Merge people** whose name is spelt differently on some papers (**Merge with…** on a
@@ -257,6 +258,7 @@ If you use nginx, raise `client_max_body_size` (e.g. `200m`) so that large PDFs 
 | `BUBO_SECURE_COOKIES` | `true` when served over HTTPS. |
 | `BUBO_SESSION_DAYS` | Session length in days (default 30). |
 | `BUBO_RADAR_HOURS` | How often to look for new publications by the people you follow (default 12; 0 turns it off; "Check now" still works). |
+| `BUBO_PROFILE_DAYS` | How often, in days, the authors' affiliations, h-indexes, topics and photos are looked at again (default `3`). |
 | `BUBO_ORCID_LOOKUP` | `1` (default) looks for the ORCID iDs of the authors of your papers in the background; `0` turns it off. |
 | `BUBO_OPENALEX_API_KEY` | Optional. Without a key, OpenAlex lets all requests from your IP address share a small free daily budget; Bubo asks for little, but a [free key](https://openalex.org/settings/api) gives you your own. |
 | `BUBO_SECRET` | Optional session key; otherwise one is generated in `data/.secret_key`. |

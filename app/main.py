@@ -702,9 +702,8 @@ def person_profile(person_id: int, conn: Conn, force: bool = False):
     """Look up someone's profile (position, citations, photo) if it is out of date: the
     person's page asks when it is opened (the background usually got there first)."""
     p = _person_or_404(conn, person_id)
-    # Everyone's profile is renewed in the background every month; those followed weekly.
-    days = people.PROFILE_DAYS if p["followed"] else people.PROFILE_REFRESH_DAYS
-    stale = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat(timespec="seconds")
+    # Everyone's profile is renewed in the background every few days (BUBO_PROFILE_DAYS).
+    stale = (datetime.now(timezone.utc) - timedelta(days=people.profile_days())).isoformat(timespec="seconds")
     if p["orcid"] and (force or not p.get("profile_checked") or p["profile_checked"] < stale):
         try:
             people.refresh_profile(conn, person_id)

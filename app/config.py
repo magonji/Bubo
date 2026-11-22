@@ -24,6 +24,7 @@ class Settings:
     radar_hours: float = 12      # how often to look for new work by followed people (0: never)
     openalex_api_key: str | None = None
     orcid_lookup: bool = True    # look for the ORCID iDs of the authors of new papers
+    profile_days: float = 3      # how often authors' affiliations, h-indexes… are looked at again
 
     @property
     def db_path(self) -> Path:
@@ -72,6 +73,7 @@ def load_settings() -> Settings:
         radar_hours=float(os.environ.get("BUBO_RADAR_HOURS", "12")),
         openalex_api_key=os.environ.get("BUBO_OPENALEX_API_KEY") or None,
         orcid_lookup=os.environ.get("BUBO_ORCID_LOOKUP", "1") not in ("0", "false", "no"),
+        profile_days=max(float(os.environ.get("BUBO_PROFILE_DAYS", "3") or 3), 0.5),
     )
 
 
