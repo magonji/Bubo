@@ -126,6 +126,7 @@ function createPaperView(root, mode) {
       ${venueYear ? `<div class="pv-venue">${esc(venueYear)}</div>` : ""}
       <h1 class="pv-title" tabindex="-1">${esc(i.title) || "(untitled)"}</h1>
       ${authorsHTML(i)}
+      ${unidentifiedHTML(i)}
       <button type="button" class="pv-main primary" data-act="${main[0]}">${icon(main[1])} ${main[2]}</button>
       <div class="pv-actions${pane ? " two" : ""}">
         <button type="button" data-act="cite">${icon("quote")}<span>Cite</span></button>
@@ -174,6 +175,22 @@ function createPaperView(root, mode) {
       ${rest.length ? `<p class="pv-author-list">${list}</p>` : ""}
       ${v.people.some(Boolean) ? `<button type="button" class="pv-link pv-follow-authors" data-act="follow-authors">${icon("person-plus")} Follow authors</button>` : ""}
     </div>`;
+  }
+
+  // Papers Bubo could not find online (no DOI nor arXiv ID): say so, with the search at hand.
+  // It can be hidden for papers that are not online anywhere (some book chapters).
+  function unidentifiedHTML(i) {
+    let hidden = false;
+    try { hidden = localStorage.getItem(`unidentified-ok-${i.id}`) === "1"; } catch {}
+    if (i.doi || i.arxiv_id || i.deleted_at || hidden) return "";
+    return `<div class="pv-unidentified" role="status">
+      <p>${icon("file-search")}<span><b>Bubo could not identify this paper online.</b>
+        It may have no DOI (many older papers and book chapters do), or its PDF may not say which paper it is.</span></p>
+      <div class="pv-unid-buttons">
+        <button type="button" class="primary" data-act="refresh">${icon("refresh")} Find metadata online</button>
+        <button type="button" data-act="edit">${icon("pencil")} Edit details</button>
+        <button type="button" class="link-btn" data-act="unidentified-ok">Hide this notice</button>
+      </div></div>`;
   }
 
   function carouselHTML(i, status) {
@@ -344,6 +361,9 @@ function createPaperView(root, mode) {
         el.textContent = open ? "fewer" : `and ${more.textContent.split(",").filter((s) => s.trim()).length} more`;
         return;
       }
+      case "unidentified-ok":
+        try { localStorage.setItem(`unidentified-ok-${i.id}`, "1"); } catch {}
+        return el.closest(".pv-unidentified")?.remove();
       case "follow-authors":
         return openFollowAuthors(i, v.people, () => { loadSidebar(); render(i.id, { keepPlace: true }); });
       case "person": {

@@ -1439,3 +1439,12 @@ def test_scanned_pdfs_are_read_with_ocr(client, monkeypatch):
     ocr._setup.clear()
     client.delete(f"/api/items/{item_id}?permanent=true")
     assert not list((config.settings.data_dir / "ocr").glob(f"{item_id}-*.json"))
+
+
+def test_the_interface_is_checked_for_changes_on_every_visit(client):
+    for path in ("/", "/static/app.js", "/static/style.css", "/static/paper.js"):
+        r = client.get(path)
+        assert r.status_code == 200 and r.headers["cache-control"] == "no-cache", path
+        if path.startswith("/static/"):          # unchanged files: a quick "not modified"
+            assert client.get(path, headers={"If-None-Match": r.headers["etag"]}).status_code == 304
+    assert client.get("/static/owl.svg").headers["cache-control"] == "no-cache"

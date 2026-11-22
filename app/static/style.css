@@ -1342,3 +1342,16 @@ body.works-view .list-tools { display: none; }
 @media (max-width: 760px), (hover: none) and (max-width: 1100px) {
   .back-link { min-height: 44px; font-size: 15px; }
 }
+
+/* Papers Bubo could not find online */
+.pv-unidentified { margin: 12px 0 4px; padding: 12px 14px; border-radius: 12px; border: 1px solid var(--border);
+  background: color-mix(in srgb, var(--accent) 10%, transparent); font-size: 13.5px; line-height: 1.45; }
+.pv-unidentified p { display: flex; gap: 10px; margin: 0 0 10px; }
+.pv-unidentified p .icon { flex: none; width: 18px; height: 18px; margin-top: 1px; color: var(--accent-strong); }
+.pv-unid-buttons { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.pv-unid-buttons button:not(.link-btn) { display: inline-flex; align-items: center; gap: 6px; min-height: 36px; padding: 4px 12px; }
+.pv-unid-buttons .icon { width: 16px; height: 16px; }
+.pv-unid-buttons .link-btn { margin-left: auto; font-size: 12.5px; }
+@media (max-width: 760px), (hover: none) and (max-width: 1100px) {
+  .pv-unid-buttons button:not(.link-btn) { min-height: 44px; }
+}

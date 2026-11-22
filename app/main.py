@@ -43,6 +43,23 @@ app.add_middleware(
     https_only=settings.secure_cookies,
 )
 app.mount("/static", StaticFiles(directory=STATIC), name="static")
+
+
+@app.middleware("http")
+async def fresh_interface(request: Request, call_next):
+    """The page and its scripts and styles are checked for changes on every visit (a quick
+    "not modified" when unchanged), so a new version of Bubo shows up as soon as the server
+    has it, instead of whenever the browser decides its copy is too old. The PDF viewer's
+    large library files may be kept for a week."""
+    response = await call_next(request)
+    path = request.url.path
+    if "cache-control" not in response.headers and (
+            path == "/" or path.startswith("/paper/") or path.startswith("/static/")):
+        response.headers["Cache-Control"] = ("public, max-age=604800" if path.startswith("/static/vendor/")
+                                             else "no-cache")
+    return response
+
+
 db.init_db()
 # Give readable names to PDFs from older layouts (or left half-way by a crash).
 _startup_conn = db.connect()
