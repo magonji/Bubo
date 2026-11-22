@@ -452,11 +452,24 @@ def _title_in(title: str, text: str) -> bool:
 
 
 def _title_like(found: str, hint: str) -> bool:
-    """A file name's title (often cut short) matches a found title, or its beginning."""
+    """A file name's title matches a found title: the same, its beginning (file names cut
+    titles short), or a part of it when it is long enough (titles of older papers often start
+    with their series: "Aromatische Diazoverbindungen, V. Reaktion aromatischer…")."""
     a, b = _norm_title(found), _norm_title(hint)
     if not a or not b or len(b) < 12:
         return False
-    return SequenceMatcher(None, a, b).ratio() >= 0.9 or SequenceMatcher(None, a[:len(b) + 2], b).ratio() >= 0.92
+    if SequenceMatcher(None, a, b).ratio() >= 0.9 or SequenceMatcher(None, a[:len(b) + 2], b).ratio() >= 0.92:
+        return True
+    return len(_words(hint)) >= 4 and f" {b} " in f" {a} "
+
+
+def _same_family(a: str, b: str) -> bool:
+    """'van der Vliet', 'Vandervliet' and 'VAN DER VLIET' are one family name."""
+    pa, pb = re.sub(r"[^a-z]", "", _norm_title(a)), re.sub(r"[^a-z]", "", _norm_title(b))
+    if not pa or not pb:
+        return False
+    return pa == pb or (min(len(pa), len(pb)) > 3 and (pa in pb or pb in pa)) or \
+        _norm_title(a).split()[-1:] == _norm_title(b).split()[-1:]
 
 
 def plausible(found: dict, text: str = "", hints: dict | None = None) -> bool:
@@ -470,8 +483,8 @@ def plausible(found: dict, text: str = "", hints: dict | None = None) -> bool:
         return False
     families = [_norm_title(a.get("family") or "") for a in found.get("authors") or []]
     if hints.get("families"):
-        want = _norm_title(hints["families"][0])
-        if families and not any(want and (want == f or want in f.split()) for f in families[:3]):
+        want = hints["families"][0]
+        if families and not any(_same_family(want, f) for f in families[:3]):
             return False
     elif families and text and families[0] and families[0].split()[-1] not in _norm_title(text):
         return False
@@ -485,7 +498,10 @@ def search_crossref_citation(query: str, text: str = "", hints: dict | None = No
     if len(query) < 15:
         return None
     r = _search("https://api.crossref.org/works", {"query.bibliographic": query, "rows": 5})
-    for m in r.json()["message"].get("items", []):
+    items = r.json()["message"].get("items", [])
+    # Abstracts of a paper in abstracting journals (ChemInform…) come after the paper itself.
+    items.sort(key=lambda m: bool(re.match(r"(?i)\s*(cheminform|abstract)", " ".join(m.get("title") or []))))
+    for m in items:
         found = _crossref_to_meta(m)
         if plausible(found, text, hints):
             return found

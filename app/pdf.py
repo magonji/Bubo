@@ -56,9 +56,11 @@ def analyze(data: bytes) -> PdfInfo:
         meta = doc.metadata or {}
         title = (meta.get("title") or "").strip()
         # Generic titles left by authoring tools (e.g. "Microsoft Word - doc1.docx") are useless.
-        if title and not re.search(r"(?i)(\.docx?|\.tex|\.dvi|untitled|microsoft word)", title):
+        if title and not re.search(r"(?i)(\.docx?|\.tex|\.dvi|\.pdf|\.tmp|untitled|microsoft word)", title) \
+                and not re.fullmatch(r"[\w-]*\d[\w-]*", title):      # "tjv7373", "doc1": a file's name
             info.meta_title = title
-        info.meta_author = (meta.get("author") or "").strip() or None
+        author = (meta.get("author") or "").strip()
+        info.meta_author = author if author and author.lower() not in ("unknown", "usuario", "user", "admin") else None
         info.meta_subject = (meta.get("subject") or "").strip() or None
         texts, total = [], 0
         for i, page in enumerate(doc):

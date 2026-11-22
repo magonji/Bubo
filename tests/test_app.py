@@ -1370,3 +1370,32 @@ def test_the_openalex_profile_with_the_persons_papers_is_chosen(client):
     conn.close()
     for it in items:
         client.delete(f"/api/items/{it['id']}?permanent=true")
+
+
+def test_older_titles_with_series_joined_names_and_abstract_journals(monkeypatch):
+    from app import metadata, pdf
+    # A scan with no text: only the file name helps.
+    hints = metadata.parse_filename("Opgenorth et al - 1974 - Reaktion aromatischer Diazoniumsalze mit Nitritionen.pdf")
+    paper = {"title": "Aromatische Diazoverbindungen, V 1) Reaktion aromatischer Diazoniumsalze mit Nitritionen 2)",
+             "year": 1974, "authors": [{"given": "H.-J.", "family": "Opgenorth"}], "doi": "10.1002/jlac.197419740821"}
+    assert metadata.plausible(paper, "", hints)                                    # the title after its series
+    vliet = metadata.parse_filename("van der Vliet et al - 1995 - Tyrosine modification by reactive nitrogen species.pdf")
+    assert metadata.plausible({"title": "Tyrosine Modification by Reactive Nitrogen Species: A Closer Look", "year": 1995,
+                               "authors": [{"given": "A.", "family": "Vandervliet"}]}, "", vliet)   # "Vandervliet"
+    assert not metadata.plausible({"title": "Tyrosine Modification by Reactive Nitrogen Species: A Closer Look", "year": 1995,
+                                   "authors": [{"given": "A.", "family": "Smith"}]}, "", vliet)
+    # The paper itself is preferred to ChemInform's abstract of it.
+    class R:
+        def json(self):
+            return {"message": {"items": [
+                {"title": ["ChemInform Abstract: AROMATISCHE DIAZOVERBINDUNGEN 5. MITT. REAKTION AROMATISCHER DIAZONIUMSALZE MIT NITRITIONEN"],
+                 "author": [{"family": "OPGENORTH"}], "issued": {"date-parts": [[1974]]}, "DOI": "10.1002/chin.197445179", "type": "journal-article"},
+                {"title": [paper["title"]], "author": [{"family": "Opgenorth"}], "issued": {"date-parts": [[1974]]},
+                 "DOI": paper["doi"], "type": "journal-article"}]}}
+    monkeypatch.setattr(metadata, "_search", lambda url, params: R())
+    assert metadata.search_crossref_citation("Opgenorth 1974 Reaktion aromatischer Diazoniumsalze", "", hints)["doi"] == paper["doi"]
+    # A PDF whose own title is a file's name is not searched with it.
+    import pymupdf
+    doc = pymupdf.open(); doc.new_page(); doc.set_metadata({"title": "tjv7373.PDF", "author": "Unknown"})
+    info = pdf.analyze(doc.tobytes())
+    assert info.meta_title is None and info.meta_author is None
