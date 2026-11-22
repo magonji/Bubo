@@ -157,7 +157,54 @@ async function loadWorks() {
 }
 
 const isStale = (iso) => !iso || Date.now() - new Date(iso) > 7 * 86400e3;
-const peopleState = { all: [], filter: "all", shown: 120 };
+const peopleState = { all: [], filter: "all", shown: 120, view: "grid", sort: { key: "", dir: 1 } };
+try { peopleState.view = localStorage.getItem("peopleView") === "table" ? "table" : "grid"; } catch {}
+
+// "Mario" and "González-Jiménez" from "Mario González-Jiménez" (family name as stored).
+function nameParts(p) {
+  const fam = p.family_name && p.name.endsWith(p.family_name) ? p.family_name : p.name.split(" ").slice(-1)[0];
+  return { given: p.name.slice(0, p.name.length - fam.length).trim(), family: fam };
+}
+
+const PEOPLE_COLUMNS = [
+  { key: "given", label: "Name", value: (p) => nameParts(p).given.toLowerCase() },
+  { key: "family", label: "Family name", value: (p) => nameParts(p).family.toLowerCase() },
+  { key: "affiliation", label: "Affiliation", value: (p) => (p.affiliation || "").toLowerCase() },
+  { key: "h_index", label: "h-index", value: (p) => p.h_index ?? -1, numeric: true },
+];
+
+function sortedPeople(list) {
+  const col = PEOPLE_COLUMNS.find((c) => c.key === peopleState.sort.key);
+  if (!col) return list;
+  const dir = peopleState.sort.dir;
+  return [...list].sort((a, b) => {
+    const x = col.value(a), y = col.value(b);
+    // Empty values (no affiliation, no h-index) go last whichever the direction.
+    const ex = x === "" || x === -1, ey = y === "" || y === -1;
+    if (ex !== ey) return ex ? 1 : -1;
+    return (x < y ? -1 : x > y ? 1 : 0) * dir;
+  });
+}
+
+function peopleTableHTML(list) {
+  const s = peopleState.sort;
+  return `<div class="people-table-wrap"><table class="people-table">
+    <thead><tr><th class="pt-photo"><span class="visually-hidden">Photo</span></th>${PEOPLE_COLUMNS.map((c) => `
+      <th class="pt-${c.key}${c.numeric ? " num" : ""}" aria-sort="${s.key === c.key ? (s.dir > 0 ? "ascending" : "descending") : "none"}">
+        <button type="button" data-act="people-sort" data-key="${c.key}">${c.label}${s.key === c.key ? icon(s.dir > 0 ? "arrow-up" : "arrow-down") : ""}</button></th>`).join("")}
+    </tr></thead>
+    <tbody>${list.map((p) => {
+      const n = nameParts(p);
+      return `<tr data-person-card="${p.id}" tabindex="0"${p.followed ? ' class="is-followed"' : ""}>
+        <td class="pt-photo">${avatarHTML(p, "avatar-row")}</td>
+        <td class="pt-given">${esc(n.given)}</td>
+        <td class="pt-family"><span class="pt-fam">${esc(n.family)}</span>${p.followed ? `<span class="pt-following" title="You follow them">${icon("radar")}</span>` : ""}
+          ${p.affiliation ? `<span class="pt-aff-under">${esc(p.affiliation)}</span>` : ""}</td>
+        <td class="pt-affiliation">${esc(p.affiliation || "")}</td>
+        <td class="pt-h_index num">${p.h_index ?? ""}</td>
+      </tr>`;
+    }).join("")}</tbody></table></div>`;
+}
 
 function workMatches(w, q) {
   const text = `${w.title} ${w.venue || ""} ${(w.authors || []).map((a) => `${a.given} ${a.family}`).join(" ")}`.toLowerCase();
@@ -278,7 +325,7 @@ function renderPeoplePage() {
   const following = all.filter((p) => p.followed);
   const pool = peopleState.filter === "following" ? following : all;
   const q = (state.q || "").toLowerCase();
-  const list = q ? pool.filter((p) => `${p.name} ${p.affiliation || ""} ${(p.topics || []).join(" ")}`.toLowerCase().includes(q)) : pool;
+  const list = sortedPeople(q ? pool.filter((p) => `${p.name} ${p.affiliation || ""} ${(p.topics || []).join(" ")}`.toLowerCase().includes(q)) : pool);
   document.body.classList.add("works-view");
   $(".table-wrap").classList.add("with-works");
   $("#cards").innerHTML = "";
@@ -297,8 +344,12 @@ function renderPeoplePage() {
           : "The authors of your papers appear here as you add them."}</p></div>
       <div class="works-buttons"><button type="button" data-act="follow">${icon("person-plus")} Follow by ORCID iD</button></div>
     </div>
-    <div class="people-tabs" role="tablist" aria-label="Who to show">${tab("all", "All", all.length)}${tab("following", "Following", following.length)}</div>
-    ${shown.length ? `<div class="people-grid">${shown.map((p) => `
+    <div class="people-bar"><div class="people-tabs" role="tablist" aria-label="Who to show">${tab("all", "All", all.length)}${tab("following", "Following", following.length)}</div>
+      <div class="people-view" role="group" aria-label="Layout">
+        <button type="button" class="icon-btn${peopleState.view === "grid" ? " active" : ""}" data-act="people-view" data-view="grid" aria-pressed="${peopleState.view === "grid"}" data-tip="Portraits" aria-label="Portraits">${icon("grid")}</button>
+        <button type="button" class="icon-btn${peopleState.view === "table" ? " active" : ""}" data-act="people-view" data-view="table" aria-pressed="${peopleState.view === "table"}" data-tip="Table" aria-label="Table">${icon("rows-1")}</button>
+      </div></div>
+    ${shown.length && peopleState.view === "table" ? peopleTableHTML(shown) : shown.length ? `<div class="people-grid">${shown.map((p) => `
       <a class="person-card${p.followed ? " is-followed" : ""}" href="#" data-person-card="${p.id}">
         <span class="pc-photo">${avatarHTML(p, "avatar-card")}${p.unseen ? `<span class="badge badge-tl pc-new">${p.unseen} new</span>`
           : p.followed ? `<span class="badge badge-tl pc-following" title="You follow them">${icon("radar")}</span>` : ""}</span>
@@ -367,6 +418,15 @@ $("#works").addEventListener("click", async (e) => {
     } else if (act === "people-filter") {
       peopleState.filter = el.dataset.filter;
       peopleState.shown = 120;
+      renderPeoplePage();
+    } else if (act === "people-view") {
+      peopleState.view = el.dataset.view;
+      try { localStorage.setItem("peopleView", peopleState.view); } catch {}
+      renderPeoplePage();
+    } else if (act === "people-sort") {
+      const key = el.dataset.key, s = peopleState.sort;
+      // h-index starts highest first; text columns A to Z.
+      peopleState.sort = s.key === key ? { key, dir: -s.dir } : { key, dir: key === "h_index" ? -1 : 1 };
       renderPeoplePage();
     } else if (act === "people-more") {
       peopleState.shown += 240;
@@ -560,3 +620,8 @@ async function openMergeDialog(p) {
   chooseStep();
   dlg.showModal();
 }
+
+$("#works").addEventListener("keydown", (e) => {
+  const row = e.target.closest("tr[data-person-card]");
+  if (row && (e.key === "Enter" || e.key === " ")) { e.preventDefault(); row.click(); }
+});

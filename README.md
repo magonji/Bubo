@@ -53,7 +53,8 @@ them from the browser.
   records that list the paper, and the iDs printed or linked in the PDF. An iD is only given
   to an author whose name matches it, as these records are sometimes wrong. This happens in
   the background when you add a paper and, once, for the whole library. Authors with no iD
-  are told apart by family name and initial.
+  are told apart by family name and initial. A second layout shows People as a table (photo,
+  name, family name, affiliation and h-index), sorted by any column.
 - **Follow scientists** from a paper's author list (**Follow authors** on its sheet: tick
   whoever you want, and paste an iD Bubo did not find), from their page, or anyone by their
   ORCID iD (the **+** next to "Following" in the sidebar). Bubo lists each person's

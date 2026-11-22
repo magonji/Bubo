@@ -607,7 +607,7 @@ def list_people(conn, scope: str = "following", person_id: int | None = None) ->
     in the library and everyone followed, those followed first, then by papers."""
     if scope == "all":
         rows = conn.execute(
-            f"SELECT p.id, p.orcid, p.name, p.family_name, p.followed, p.affiliation, p.photo, p.photo_source, "
+            f"SELECT p.id, p.orcid, p.name, p.family_name, p.followed, p.affiliation, p.h_index, p.photo, p.photo_source, "
             f"p.profile_checked, p.topics, {_PAPERS}, "
             "(SELECT COUNT(*) FROM person_works w WHERE w.person_id = p.id) AS works, "
             "(SELECT COUNT(*) FROM person_works w WHERE w.person_id = p.id AND w.is_new = 1 "
