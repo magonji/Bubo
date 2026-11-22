@@ -256,26 +256,41 @@ def _name_matches(name: str | None, family: str | None) -> bool:
     return not family or (bool(name) and _plain(family) in _plain(name))
 
 
+def orcid_position(c: httpx.Client, orcid: str) -> dict:
+    """Current affiliation, country and role, from the person's ORCID record ({} if none)."""
+    try:
+        r = c.get(f"{ORCID_API}/{orcid}/employments", headers={"Accept": "application/json"})
+        r.raise_for_status()
+        for g in r.json().get("affiliation-group") or []:
+            for s in g.get("summaries") or []:
+                e = s.get("employment-summary") or {}
+                if e.get("end-date"):
+                    continue
+                org = e.get("organization") or {}
+                return {"affiliation": org.get("name"), "country": (org.get("address") or {}).get("country"),
+                        "role": e.get("role-title")}
+    except (httpx.HTTPError, ValueError) as e:
+        log.warning("ORCID employments %s: %s", orcid, e)
+    return {}
+
+
+def _openalex_author(a: dict) -> dict:
+    stats = a.get("summary_stats") or {}
+    p = {"openalex_id": (a.get("id") or "").rsplit("/", 1)[-1] or None, "works_count": a.get("works_count"),
+         "cited_by": a.get("cited_by_count"), "h_index": stats.get("h_index"),
+         "topics": json.dumps([t["display_name"] for t in (a.get("topics") or [])[:5]])}
+    inst = a.get("last_known_institutions") or []
+    if inst:
+        p["affiliation"], p["country"] = inst[0].get("display_name"), inst[0].get("country_code")
+    return p
+
+
 def fetch_profile(orcid: str, family: str | None) -> dict:
     """What can be found about a person besides their works. Every part is optional."""
     p: dict = {}
     with _client() as c:
         # Current position, from the person's own ORCID record.
-        try:
-            r = c.get(f"{ORCID_API}/{orcid}/employments", headers={"Accept": "application/json"})
-            r.raise_for_status()
-            current = []
-            for g in r.json().get("affiliation-group") or []:
-                for s in g.get("summaries") or []:
-                    e = s.get("employment-summary") or {}
-                    if e.get("end-date"):
-                        continue
-                    org = e.get("organization") or {}
-                    current.append((org.get("name"), (org.get("address") or {}).get("country"), e.get("role-title")))
-            if current:
-                p["affiliation"], p["country"], p["role"] = current[0]
-        except (httpx.HTTPError, ValueError) as e:
-            log.warning("ORCID employments %s: %s", orcid, e)
+        p.update(orcid_position(c, orcid))
         # Citation figures and topics, only if OpenAlex's author really is this person.
         try:
             r = c.get(f"{OPENALEX_API}/authors/orcid:{orcid}", params=_openalex_params())
@@ -317,68 +332,108 @@ def fetch_profile(orcid: str, family: str | None) -> dict:
     return p
 
 
-PHOTO_BATCH = 50             # ORCID iDs per Wikidata search (and entities per request)
-PHOTO_DAYS = 60              # how often to look again for someone without a photo
+PHOTO_BATCH = 50             # people per OpenAlex or Wikidata request
+PROFILE_REFRESH_DAYS = 30    # how often every author's profile is looked at again
 
 
-def wikidata_photos(c: httpx.Client, orcids: list[str]) -> dict[str, tuple[str, str]]:
-    """For the ORCID iDs with a photo on Wikidata: (Wikidata id, Commons file name). Two
-    requests for up to 50 iDs: a search for any of them, then those entries' iDs and photos."""
+def wikidata_entries(c: httpx.Client, orcids: list[str]) -> dict[str, dict]:
+    """For the ORCID iDs on Wikidata: their entry's id, description, English Wikipedia
+    article and photo (a Commons file name). Two requests for up to 50 iDs."""
     r = c.get(WIKIDATA_API, params={"action": "query", "list": "search", "format": "json", "srlimit": 50,
                                     "srsearch": "haswbstatement:" + "|".join(f"P496={o}" for o in orcids)})
     r.raise_for_status()
     ids = [h["title"] for h in r.json()["query"]["search"]]
     if not ids:
         return {}
-    r = c.get(WIKIDATA_API, params={"action": "wbgetentities", "ids": "|".join(ids[:50]), "format": "json", "props": "claims"})
+    r = c.get(WIKIDATA_API, params={"action": "wbgetentities", "ids": "|".join(ids[:50]), "format": "json",
+                                    "props": "claims|descriptions|sitelinks", "languages": "en"})
     r.raise_for_status()
     wanted, out = set(orcids), {}
     for qid, e in r.json().get("entities", {}).items():
         claims = e.get("claims", {})
         images = [x["mainsnak"].get("datavalue", {}).get("value") for x in claims.get("P18", [])]
         images = [i for i in images if i]
+        desc = (e.get("descriptions", {}).get("en") or {}).get("value")
+        entry = {"wikidata_id": qid,
+                 # Bots describe many scientists as "researcher ORCID ID = …": no description.
+                 "description": None if desc and re.search(r"orcid|\d{4}-\d{4}", desc, re.I) else desc,
+                 "wikipedia": (e.get("sitelinks", {}).get("enwiki") or {}).get("title"),
+                 "photo": images[0].replace(" ", "_") if images else None}
         for x in claims.get("P496", []):
             orcid = x["mainsnak"].get("datavalue", {}).get("value")
-            if orcid in wanted and images and orcid not in out:
-                out[orcid] = (qid, images[0].replace(" ", "_"))
+            if orcid in wanted and orcid not in out:
+                out[orcid] = entry
     return out
 
 
-def find_photos(conn) -> int:
-    """Photos from Wikimedia Commons for authors with an ORCID iD, asked of Wikidata many
-    at a time (free, and nothing to do with OpenAlex's budget). Returns how many were found."""
-    stale = (_now() - timedelta(days=PHOTO_DAYS)).isoformat(timespec="seconds")
-    found = 0
+def fill_profiles(conn) -> int:
+    """Profiles for every author, not only for those followed or whose page was opened:
+    citation figures, topics and affiliation from OpenAlex (50 people per request, by ORCID
+    iD or OpenAlex id), current position from ORCID (one free request each), and description,
+    Wikipedia and photo from Wikidata (50 per request). Each is looked at again after
+    PROFILE_REFRESH_DAYS. Returns how many profiles were filled in."""
+    stale = (_now() - timedelta(days=PROFILE_REFRESH_DAYS)).isoformat(timespec="seconds")
+    done = 0
     while True:
         rows = conn.execute(
-            "SELECT id, orcid FROM people WHERE orcid IS NOT NULL AND photo IS NULL "
-            "AND IFNULL(photo_source, '') NOT IN ('upload', 'removed') "
-            "AND (photo_looked IS NULL OR photo_looked < ?) ORDER BY id LIMIT ?", (stale, PHOTO_BATCH)).fetchall()
+            "SELECT id, orcid, openalex_id, family_name, photo, photo_source FROM people "
+            "WHERE (orcid IS NOT NULL OR openalex_id IS NOT NULL) "
+            "AND (profile_checked IS NULL OR profile_checked < ?) ORDER BY followed DESC, id LIMIT ?",
+            (stale, PHOTO_BATCH)).fetchall()
         if not rows:
-            return found
-        stamp = _now().isoformat(timespec="seconds")
+            return done
+        found: dict[int, dict] = {r["id"]: {} for r in rows}
         with _client() as c:
+            # OpenAlex: by ORCID iD, and by OpenAlex id for people without one.
+            by_orcid = {r["orcid"]: r for r in rows if r["orcid"]}
+            by_oa = {r["openalex_id"]: r for r in rows if not r["orcid"] and r["openalex_id"]}
             try:
-                photos = wikidata_photos(c, [r["orcid"] for r in rows])
-            except (httpx.HTTPError, ValueError, KeyError) as e:
-                log.warning("Wikidata photos: %s", e)
-                return found
+                for flt, keyed in (("orcid", by_orcid), ("openalex", by_oa)):
+                    if not keyed:
+                        continue
+                    res = c.get(f"{OPENALEX_API}/authors", params=_openalex_params(
+                        filter=f"{flt}:" + "|".join(keyed), **{"per-page": PHOTO_BATCH},
+                        select="id,display_name,orcid,works_count,cited_by_count,summary_stats,topics,last_known_institutions"))
+                    res.raise_for_status()
+                    for a in res.json().get("results") or []:
+                        key = (normalise_orcid(a["orcid"]) if a.get("orcid") else None) if flt == "orcid" \
+                            else (a.get("id") or "").rsplit("/", 1)[-1]
+                        r = keyed.get(key)
+                        if r and _name_matches(a.get("display_name"), r["family_name"]):
+                            found[r["id"]].update(_openalex_author(a))
+            except (httpx.HTTPError, ValueError, PeopleError) as e:
+                log.warning("OpenAlex authors: %s", e)
+                return done                # try again later rather than mark them looked at
+            # ORCID: the current position (preferred to OpenAlex's last known institution).
             for r in rows:
-                hit = photos.get(r["orcid"])
-                if hit:
-                    qid, file = hit
+                if r["orcid"]:
+                    pos = orcid_position(c, r["orcid"])
+                    found[r["id"]].update({k: v for k, v in pos.items() if v})
+                    time.sleep(0.2)
+            # Wikidata: description, Wikipedia and photo.
+            try:
+                wiki = wikidata_entries(c, list(by_orcid)) if by_orcid else {}
+            except (httpx.HTTPError, ValueError, KeyError) as e:
+                log.warning("Wikidata: %s", e)
+                wiki = {}
+            for orcid, entry in wiki.items():
+                r = by_orcid[orcid]
+                found[r["id"]].update({k: entry[k] for k in ("wikidata_id", "description", "wikipedia") if entry[k]})
+                if entry["photo"] and not r["photo"] and r["photo_source"] not in ("upload", "removed"):
                     try:
-                        img = c.get(f"https://commons.wikimedia.org/wiki/Special:FilePath/{file}", params={"width": 600})
+                        img = c.get(f"https://commons.wikimedia.org/wiki/Special:FilePath/{entry['photo']}", params={"width": 600})
                         img.raise_for_status()
-                        name = save_photo(r["id"], img.content)
-                        conn.execute("UPDATE people SET photo = ?, photo_source = 'wikidata', photo_credit = ?, "
-                                     "wikidata_id = COALESCE(wikidata_id, ?) WHERE id = ?",
-                                     (name, f"https://commons.wikimedia.org/wiki/File:{file}", qid, r["id"]))
-                        found += 1
+                        found[r["id"]].update(photo=save_photo(r["id"], img.content), photo_source="wikidata",
+                                              photo_credit=f"https://commons.wikimedia.org/wiki/File:{entry['photo']}")
                     except (httpx.HTTPError, PeopleError) as e:
                         log.warning("Photo of person %s: %s", r["id"], e)
                     time.sleep(0.5)            # be gentle with Wikimedia
-                conn.execute("UPDATE people SET photo_looked = ? WHERE id = ?", (stamp, r["id"]))
+        stamp = _now().isoformat(timespec="seconds")
+        for pid, values in found.items():
+            values["profile_checked"] = stamp
+            sets = ", ".join(f"{k} = ?" for k in values)
+            conn.execute(f"UPDATE people SET {sets} WHERE id = ?", (*values.values(), pid))
+            done += len(values) > 1
         conn.commit()
         time.sleep(1)
 

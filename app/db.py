@@ -238,6 +238,7 @@ def init_db() -> None:
         ("cover_figure_id", "INTEGER"),   # chosen thumbnail (NULL: the first figure)
         ("figures_version", "INTEGER"),   # figures.VERSION that produced them
         ("authors_checked", "TEXT"),      # when authors' ORCID iDs were looked for (authors.py)
+        ("authors_openalex", "TEXT"),     # when authors' OpenAlex ids were looked for (authors.py)
         ("deleted_at", "TEXT"),           # in the trash since (NULL: in the library)
     ]:
         if column not in columns:
@@ -541,7 +542,8 @@ def _clean(meta: dict) -> dict:
         if k == "authors":
             v = json.dumps([{"given": (a.get("given") or "").strip(),
                              "family": (a.get("family") or "").strip(),
-                             **({"orcid": a["orcid"]} if a.get("orcid") else {})}
+                             **({"orcid": a["orcid"]} if a.get("orcid") else {}),
+                             **({"openalex": a["openalex"]} if a.get("openalex") else {})}
                             for a in (v or []) if a.get("given") or a.get("family")],
                            ensure_ascii=False)
         elif k == "year":

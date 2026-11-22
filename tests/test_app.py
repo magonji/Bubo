@@ -1206,17 +1206,18 @@ def test_people_you_follow_stay_when_their_papers_are_deleted(client):
     assert names() == set()
 
 
-def test_authors_photos_come_from_wikidata_in_batches(client, monkeypatch):
+def test_every_authors_profile_is_filled_in_the_background(client, monkeypatch):
     import io
     from PIL import Image
     from app import db, people
     login(client)
-    item = client.post("/api/items", json={"title": "Famous", "authors": [{"given": "Ada", "family": "Lovelace"},
-                                                                        {"given": "Bo", "family": "Plain"}]}).json()
+    item = client.post("/api/items", json={"title": "Famous", "authors": [
+        {"given": "Ada", "family": "Lovelace"}, {"given": "Bo", "family": "Plain"}, {"given": "Cy", "family": "Noid"}]}).json()
     conn = db.connect()
-    ada, bo = [a["id"] for a in client.get(f"/api/items/{item['id']}/people").json()["authors"]]
+    ada, bo, cy = [a["id"] for a in client.get(f"/api/items/{item['id']}/people").json()["authors"]]
     conn.execute("UPDATE people SET orcid = '0000-0002-1825-0097' WHERE id = ?", (ada,))
     conn.execute("UPDATE people SET orcid = '0000-0001-5109-3700' WHERE id = ?", (bo,))
+    conn.execute("UPDATE people SET openalex_id = 'A99' WHERE id = ?", (cy,))       # known to OpenAlex only
     conn.commit()
     buf = io.BytesIO(); Image.new("RGB", (300, 400), "navy").save(buf, "JPEG")
     calls = []
@@ -1224,28 +1225,46 @@ def test_authors_photos_come_from_wikidata_in_batches(client, monkeypatch):
         def __init__(self, data=None, content=b""): self._d, self.content = data, content
         def raise_for_status(self): pass
         def json(self): return self._d
+    def author(oid, name, orcid, h):
+        return {"id": f"https://openalex.org/{oid}", "display_name": name, "orcid": orcid and f"https://orcid.org/{orcid}",
+                "works_count": 10, "cited_by_count": 100 * h, "summary_stats": {"h_index": h}, "topics": [{"display_name": "Engines"}],
+                "last_known_institutions": [{"display_name": "Somewhere", "country_code": "GB"}]}
     class Fake:
         def __enter__(self): return self
         def __exit__(self, *a): pass
         def get(self, url, params=None, **kw):
-            calls.append(params or {})
+            calls.append(url)
+            if url.endswith("/authors") and params["filter"].startswith("orcid:"):
+                assert params["filter"] == "orcid:0000-0002-1825-0097|0000-0001-5109-3700"
+                return Resp({"results": [author("A1", "Ada Lovelace", "0000-0002-1825-0097", 12),
+                                         author("A2", "Someone Else", "0000-0001-5109-3700", 50)]})   # wrong name: ignored
+            if url.endswith("/authors"):
+                assert params["filter"] == "openalex:A99"
+                return Resp({"results": [author("A99", "Cy Noid", None, 7)]})
+            if url.endswith("/employments"):
+                if "1825" in url:
+                    return Resp({"affiliation-group": [{"summaries": [{"employment-summary": {
+                        "organization": {"name": "Analytical Society", "address": {"country": "GB"}}, "role-title": "Countess"}}]}]})
+                return Resp({"affiliation-group": []})
             if params and params.get("list") == "search":
-                assert "P496=0000-0002-1825-0097|P496=0000-0001-5109-3700" in params["srsearch"]
                 return Resp({"query": {"search": [{"title": "Q7259"}]}})
             if params and params.get("action") == "wbgetentities":
                 return Resp({"entities": {"Q7259": {"claims": {
                     "P496": [{"mainsnak": {"datavalue": {"value": "0000-0002-1825-0097"}}}],
-                    "P18": [{"mainsnak": {"datavalue": {"value": "Ada Lovelace portrait.jpg"}}}]}}}})
+                    "P18": [{"mainsnak": {"datavalue": {"value": "Ada Lovelace portrait.jpg"}}}]},
+                    "descriptions": {"en": {"value": "English mathematician"}}, "sitelinks": {"enwiki": {"title": "Ada Lovelace"}}}}})
             return Resp(content=buf.getvalue())          # the photo itself
     monkeypatch.setattr(people, "_client", lambda: Fake())
     monkeypatch.setattr(people.time, "sleep", lambda s: None)
-    assert people.find_photos(conn) == 1
+    assert people.fill_profiles(conn) == 2
     everyone = {p["id"]: p for p in client.get("/api/people", params={"scope": "all"}).json()["people"]}
-    assert everyone[ada]["photo_url"] and not everyone[bo]["photo_url"]
-    row = conn.execute("SELECT photo_credit, wikidata_id FROM people WHERE id = ?", (ada,)).fetchone()
-    assert row["photo_credit"].endswith("File:Ada_Lovelace_portrait.jpg") and row["wikidata_id"] == "Q7259"
+    a = client.get(f"/api/people/{ada}").json()
+    assert a["h_index"] == 12 and a["affiliation"] == "Analytical Society" and a["role"] == "Countess"
+    assert a["description"] == "English mathematician" and a["wikipedia"] == "Ada Lovelace" and a["photo_url"]
+    assert everyone[bo]["h_index"] is None                                          # OpenAlex's was someone else
+    assert everyone[cy]["h_index"] == 7 and everyone[cy]["affiliation"] == "Somewhere"
     n = len(calls)
-    assert people.find_photos(conn) == 0 and len(calls) == n       # not asked again for a while
+    assert people.fill_profiles(conn) == 0 and len(calls) == n       # not asked again for a while
     conn.close()
     client.delete(f"/api/items/{item['id']}?permanent=true")
 

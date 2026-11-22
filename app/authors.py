@@ -127,6 +127,9 @@ def link_item(conn, item_id: int) -> None:
             pid = _person_for(conn, a)
             if pid:
                 _better_name(conn, pid, a)
+                if a.get("openalex"):
+                    conn.execute("UPDATE people SET openalex_id = ? WHERE id = ? AND openalex_id IS NULL",
+                                 (a["openalex"], pid))
                 conn.execute("INSERT OR IGNORE INTO item_authors (item_id, pos, person_id) VALUES (?, ?, ?)",
                              (item_id, pos, pid))
     drop_orphans(conn)
@@ -164,13 +167,14 @@ def link_all(conn) -> None:
 
 def keep_orcids(old: list[dict], new: list[dict]) -> list[dict]:
     """An edited author list keeps the iDs already found for the same names."""
-    known = {(people._plain(a.get("given")), people._plain(a.get("family"))): a["orcid"]
-             for a in old if a.get("orcid")}
-    for a in new:
-        if not a.get("orcid"):
-            orcid = known.get((people._plain(a.get("given")), people._plain(a.get("family"))))
-            if orcid:
-                a["orcid"] = orcid
+    for field in ("orcid", "openalex"):
+        known = {(people._plain(a.get("given")), people._plain(a.get("family"))): a[field]
+                 for a in old if a.get(field)}
+        for a in new:
+            if not a.get(field):
+                value = known.get((people._plain(a.get("given")), people._plain(a.get("family"))))
+                if value:
+                    a[field] = value
     return new
 
 
@@ -280,18 +284,18 @@ def _orcid(value: str | None) -> str | None:
         return None
 
 
-def _assign(authors: list[dict], candidates: list[tuple[str, str, str]]) -> int:
-    """Give each author without an iD the one candidate (given, family, orcid) that matches
-    their name. Returns how many were given one."""
-    taken = {a["orcid"] for a in authors if a.get("orcid")}
+def _assign(authors: list[dict], candidates: list[tuple[str, str, str]], field: str = "orcid") -> int:
+    """Give each author without an iD (field: "orcid" or "openalex") the one candidate
+    (given, family, id) that matches their name. Returns how many were given one."""
+    taken = {a[field] for a in authors if a.get(field)}
     found = 0
     for a in authors:
-        if a.get("orcid"):
+        if a.get(field):
             continue
         match = {o for g, f, o in candidates if o not in taken and same_person(a, g, f)}
         if len(match) == 1:
-            a["orcid"] = match.pop()
-            taken.add(a["orcid"])
+            a[field] = match.pop()
+            taken.add(a[field])
             found += 1
     return found
 
@@ -301,28 +305,33 @@ def _split(name: str) -> tuple[str, str]:
     return given, family or name
 
 
-def from_openalex(c: httpx.Client, dois: list[str]) -> dict[str, list[tuple[str, str, str]]]:
-    """For each DOI, the authors OpenAlex knows an iD for: (given, family, orcid). An author
-    counts only when the name printed on the paper and OpenAlex's name for the iD agree."""
-    out: dict[str, list] = {}
+def from_openalex(c: httpx.Client, dois: list[str]) -> tuple[dict[str, list], dict[str, list]]:
+    """For each DOI, the authors OpenAlex knows: their ORCID iDs and their OpenAlex ids, as
+    (given, family, id). An author counts only when the name printed on the paper and
+    OpenAlex's name for them agree."""
+    orcids: dict[str, list] = {}
+    ids: dict[str, list] = {}
     if not dois:
-        return out
+        return orcids, ids
     r = c.get(f"{people.OPENALEX_API}/works", params=people._openalex_params(
         filter="doi:" + "|".join(dois), select="doi,authorships", **{"per-page": BATCH}))
     r.raise_for_status()
     for w in r.json().get("results") or []:
         doi = people._doi(w.get("doi"))
         for au in w.get("authorships") or []:
-            orcid = _orcid((au.get("author") or {}).get("orcid"))
+            author = au.get("author") or {}
             printed = au.get("raw_author_name") or ""
-            known = (au.get("author") or {}).get("display_name") or ""
-            if not orcid or not printed:
+            if not printed:
                 continue
             g, f = _split(printed)
-            kg, kf = _split(known)
-            if same_person({"given": g, "family": f}, kg, kf):
-                out.setdefault(doi, []).append((g, f, orcid))
-    return out
+            kg, kf = _split(author.get("display_name") or "")
+            if not same_person({"given": g, "family": f}, kg, kf):
+                continue
+            if orcid := _orcid(author.get("orcid")):
+                orcids.setdefault(doi, []).append((g, f, orcid))
+            if oa := (author.get("id") or "").rsplit("/", 1)[-1]:
+                ids.setdefault(doi, []).append((g, f, oa))
+    return orcids, ids
 
 
 def from_orcid_search(c: httpx.Client, query: str) -> list[tuple[str, str, str]]:
@@ -362,14 +371,15 @@ def resolve(conn, item_ids: list[int]) -> int:
     found = 0
     missing = lambda p: any(not a.get("orcid") for a in p["authors"])
     with people._client() as c:
-        dois = [p["doi"] for p in papers if p["doi"] and missing(p)]
+        dois = [p["doi"] for p in papers if p["doi"]]
         try:
-            by_doi = from_openalex(c, dois)
+            by_doi, oa_ids = from_openalex(c, dois)
         except (httpx.HTTPError, ValueError) as e:
             log.warning("OpenAlex authors: %s", e)
-            by_doi = {}
+            by_doi, oa_ids = {}, {}
         for p in papers:
             found += _assign(p["authors"], by_doi.get(p["doi"], []))
+            _assign(p["authors"], oa_ids.get(p["doi"], []), "openalex")
         for p in papers:
             if p["doi"] and missing(p):
                 try:
@@ -388,8 +398,8 @@ def resolve(conn, item_ids: list[int]) -> int:
                         log.warning("ORCID names for a PDF's iDs: %s", e)
     stamp = datetime.now(timezone.utc).isoformat(timespec="seconds")
     for p in papers:
-        conn.execute("UPDATE items SET authors = ?, authors_checked = ? WHERE id = ?",
-                     (json.dumps(p["authors"], ensure_ascii=False), stamp, p["id"]))
+        conn.execute("UPDATE items SET authors = ?, authors_checked = ?, authors_openalex = ? WHERE id = ?",
+                     (json.dumps(p["authors"], ensure_ascii=False), stamp, stamp, p["id"]))
         link_item(conn, p["id"])
     merge_by_name(conn)
     conn.commit()
@@ -405,15 +415,44 @@ def kick() -> None:
     _wake.set()
 
 
+def openalex_ids(conn, item_ids: list[int]) -> None:
+    """For papers whose authors were looked at before OpenAlex ids were kept: one OpenAlex
+    request for up to 50 papers gives each author their OpenAlex id (and any iD missed)."""
+    rows = [r for r in (conn.execute("SELECT id, doi, authors FROM items WHERE id = ?", (i,)).fetchone()
+                        for i in item_ids) if r]
+    papers = [{"id": r["id"], "doi": people._doi(r["doi"]), "authors": json.loads(r["authors"] or "[]")} for r in rows]
+    try:
+        with people._client() as c:
+            by_doi, oa_ids = from_openalex(c, [p["doi"] for p in papers if p["doi"]])
+    except (httpx.HTTPError, ValueError) as e:
+        log.warning("OpenAlex authors: %s", e)
+        return
+    stamp = datetime.now(timezone.utc).isoformat(timespec="seconds")
+    for p in papers:
+        _assign(p["authors"], by_doi.get(p["doi"], []))
+        _assign(p["authors"], oa_ids.get(p["doi"], []), "openalex")
+        conn.execute("UPDATE items SET authors = ?, authors_openalex = ? WHERE id = ?",
+                     (json.dumps(p["authors"], ensure_ascii=False), stamp, p["id"]))
+        link_item(conn, p["id"])
+    merge_by_name(conn)
+    conn.commit()
+
+
 def run_pending(conn) -> int:
     """Look at every paper waiting, BATCH at a time. Returns how many iDs were found."""
     found = 0
     while True:
         ids = [r[0] for r in conn.execute(
             "SELECT id FROM items WHERE authors_checked IS NULL AND deleted_at IS NULL ORDER BY id DESC LIMIT ?", (BATCH,))]
-        if not ids:
-            return found
-        found += resolve(conn, ids)
+        if ids:
+            found += resolve(conn, ids)
+        else:
+            ids = [r[0] for r in conn.execute(
+                "SELECT id FROM items WHERE authors_openalex IS NULL AND deleted_at IS NULL "
+                "AND IFNULL(doi, '') != '' ORDER BY id DESC LIMIT ?", (BATCH,))]
+            if not ids:
+                return found
+            openalex_ids(conn, ids)
         time.sleep(1)
 
 
@@ -430,9 +469,9 @@ def start() -> None:
                 n = run_pending(conn)
                 if n:
                     log.info("Found %s ORCID iDs of authors", n)
-                n = people.find_photos(conn)       # then their photos, if they have one
+                n = people.fill_profiles(conn)     # then their profiles and photos
                 if n:
-                    log.info("Found %s photos of authors", n)
+                    log.info("Filled in %s authors' profiles", n)
             except Exception:
                 log.exception("Looking for authors' ORCID iDs failed")
             finally:

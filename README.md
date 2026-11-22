@@ -66,10 +66,12 @@ them from the browser.
   matches the person's.
 - **A person's page** has their papers in your library (all their publications, for people
   you follow), their current position (from ORCID), citations, h-index and research topics
-  (from OpenAlex, looked up when the page is first opened), a short description and Wikipedia
-  link (from Wikidata) and, for scientists with a picture on Wikimedia Commons, their photo
-  (looked for in the background for every author with an ORCID iD, 50 at a time); for anyone
-  else you can add one yourself (the camera button), or Bubo shows their initials.
+  (from OpenAlex), a short description and Wikipedia link (from Wikidata) and, for scientists
+  with a picture on Wikimedia Commons, their photo; for anyone else you can add one yourself
+  (the camera button), or Bubo shows their initials. All this is filled in in the background
+  for every author OpenAlex or ORCID knows, so it is in People without opening anyone's page:
+  OpenAlex and Wikidata are asked about 50 people at a time, ORCID one by one, and profiles
+  are renewed monthly (weekly for people you follow).
   On a paper's sheet every author links to their page, authors with a photo appear with it,
   and the people you follow stand out.
 - **Merge people** whose name is spelt differently on some papers (**Merge with…** on a
