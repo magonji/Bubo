@@ -281,6 +281,11 @@ def _people_for_all_authors(conn) -> None:
                      (authors.name_key(given, r["family_name"] or r["name"].split()[-1]), r["id"]))
     if conn.execute("SELECT 1 FROM items LIMIT 1").fetchone() and not conn.execute("SELECT 1 FROM item_authors LIMIT 1").fetchone():
         authors.link_all(conn)
+    # Profiles taken from the wrong one of several OpenAlex profiles with the same ORCID iD
+    # (before the choice by the person's papers): look at everyone's again, once.
+    if conn.execute("SELECT 1 FROM settings WHERE key = '_profiles_chosen_by_papers'").fetchone() is None:
+        conn.execute("UPDATE people SET profile_checked = NULL WHERE orcid IS NOT NULL")
+        conn.execute("INSERT INTO settings (key, value) VALUES ('_profiles_chosen_by_papers', 'true')")
     conn.commit()
 
 
@@ -939,7 +944,9 @@ def delete_annotation(conn, ann_id: int) -> None:
 # --------------------------------------------------------------------------- #
 
 def get_settings(conn) -> dict:
-    return {r["key"]: json.loads(r["value"]) for r in conn.execute("SELECT key, value FROM settings")}
+    """The user's settings (keys starting with "_" are Bubo's own notes, such as migrations done)."""
+    return {r["key"]: json.loads(r["value"]) for r in conn.execute("SELECT key, value FROM settings")
+            if not r["key"].startswith("_")}
 
 
 def set_settings(conn, values: dict) -> None:

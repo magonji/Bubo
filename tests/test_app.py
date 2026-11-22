@@ -872,7 +872,7 @@ def test_following_people_and_the_radar(client, monkeypatch):
     monkeypatch.setattr(people, "fetch_person", lambda o: {"name": "Ada Lovelace", "family": "Lovelace",
                                                            "affiliation": "Analytical Engines"})
     monkeypatch.setattr(people, "fetch_works", lambda o, family=None, full=True: list(works))
-    monkeypatch.setattr(people, "fetch_profile", lambda o, family=None: {})
+    monkeypatch.setattr(people, "fetch_profile", lambda o, family=None, **kw: {})
 
     assert client.post("/api/people", json={"orcid": "0000-0002-1825-0098"}).status_code == 422
     p = client.post("/api/people", json={"orcid": "https://orcid.org/0000-0002-1825-0097"}).json()
@@ -949,7 +949,7 @@ def test_people_profiles_and_photos(client, monkeypatch):
         buf = io.BytesIO(); Image.new("RGB", (w, h), colour).save(buf, "PNG"); return buf.getvalue()
     monkeypatch.setattr(people, "fetch_person", lambda o: {"name": "Martin Fenner", "family": "Fenner", "affiliation": None})
     monkeypatch.setattr(people, "fetch_works", lambda o, family=None, full=True: [])
-    monkeypatch.setattr(people, "fetch_profile", lambda o, family=None: {
+    monkeypatch.setattr(people, "fetch_profile", lambda o, family=None, **kw: {
         "affiliation": "Front Matter", "country": "DE", "role": "Founder", "works_count": 1056, "cited_by": 6811,
         "h_index": 35, "topics": '["Open Access", "Scientometrics"]', "wikidata_id": "Q30532925",
         "description": "German researcher", "photo_url": "https://commons.example/photo.jpg",
@@ -1020,7 +1020,7 @@ def test_every_author_is_a_person_and_can_be_followed(client, monkeypatch):
     names = {"0000-0002-1825-0097": ("Ada Lovelace", "Lovelace"), "0000-0001-5109-3700": ("Bertram Lovelace", "Lovelace")}
     monkeypatch.setattr(people, "fetch_person", lambda o: {"name": names[o][0], "family": names[o][1], "affiliation": None})
     monkeypatch.setattr(people, "fetch_works", lambda o, family=None, full=True: [])
-    monkeypatch.setattr(people, "fetch_profile", lambda o, family=None: {})
+    monkeypatch.setattr(people, "fetch_profile", lambda o, family=None, **kw: {})
     a = client.post("/api/items", json={"title": "One", "authors": [{"given": "A.", "family": "Babbage"},
                                                                      {"given": "Ada", "family": "Lovelace"}]}).json()
     b = client.post("/api/items", json={"title": "Two", "authors": [{"given": "Ada", "family": "Lovelace"},
@@ -1341,3 +1341,32 @@ def test_papers_without_a_doi_found_by_first_page_and_file_name(monkeypatch):
     fb = metadata.fallback_meta(info, "Casado - 2007 - Nitrosation of amino acids as a precursor of alkylation mechanisms.pdf")
     assert fb["title"] == "Nitrosation of amino acids as a precursor of alkylation mechanisms" and fb["year"] == 2007
     assert fb["authors"] == [{"given": "Julio", "family": "Casado"}]
+
+
+def test_the_openalex_profile_with_the_persons_papers_is_chosen(client):
+    """OpenAlex can have two profiles with one ORCID iD (one mixed with someone else's
+    papers): the one named on the person's papers in the library wins, not the last listed."""
+    import json as _json
+    from app import db, people
+    login(client)
+    items = [client.post("/api/items", json={"title": f"Paper {n}", "doi": f"10.9999/mine.{n}",
+                                             "authors": [{"given": "Mario", "family": "González-Jiménez"}]}).json() for n in range(3)]
+    conn = db.connect()
+    pid = client.get(f"/api/items/{items[0]['id']}/people").json()["authors"][0]["id"]
+    # Two papers name the big profile for him, one the small one (as OpenAlex's matching did).
+    for n, it in enumerate(items):
+        conn.execute("UPDATE items SET authors = ? WHERE id = ?", (_json.dumps(
+            [{"given": "Mario", "family": "González-Jiménez", "openalex": "A_BIG" if n < 2 else "A_SMALL"}]), it["id"]))
+    conn.commit()
+    big = {"id": "https://openalex.org/A_BIG", "works_count": 57}
+    small = {"id": "https://openalex.org/A_SMALL", "works_count": 6}
+    assert people.pick_openalex_profile(None, conn, pid, [big, small])["id"].endswith("A_BIG")
+    assert people.pick_openalex_profile(None, conn, pid, [small, big])["id"].endswith("A_BIG")
+    # No evidence in the library (and no DOIs to ask about): the one with more works.
+    conn.execute("UPDATE items SET authors = ?, doi = NULL WHERE id IN (?, ?, ?)",
+                 (_json.dumps([{"given": "Mario", "family": "González-Jiménez"}]), *[i["id"] for i in items]))
+    conn.commit()
+    assert people.pick_openalex_profile(None, conn, pid, [small, big])["id"].endswith("A_BIG")
+    conn.close()
+    for it in items:
+        client.delete(f"/api/items/{it['id']}?permanent=true")

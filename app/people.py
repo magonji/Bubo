@@ -19,6 +19,7 @@ Wikimedia Commons, kept in <data>/people. A photo can also be uploaded by hand.
 """
 
 import html
+from collections import Counter
 import json
 import logging
 import re
@@ -277,6 +278,48 @@ def orcid_position(c: httpx.Client, orcid: str) -> dict:
     return {}
 
 
+def _library_evidence(conn, person_id: int) -> tuple[Counter, list[str]]:
+    """What the library says about someone's OpenAlex profile: how many of their papers name
+    each OpenAlex author id for them (kept when their authors were matched), and the DOIs of
+    their papers."""
+    votes, dois = Counter(), []
+    for r in conn.execute(
+            "SELECT i.authors, i.doi, a.pos FROM item_authors a JOIN items i ON i.id = a.item_id "
+            "WHERE a.person_id = ? AND i.deleted_at IS NULL", (person_id,)):
+        authors = json.loads(r["authors"] or "[]")
+        if r["pos"] < len(authors) and authors[r["pos"]].get("openalex"):
+            votes[authors[r["pos"]]["openalex"]] += 1
+        if r["doi"]:
+            dois.append(r["doi"].lower())
+    return votes, dois
+
+
+def pick_openalex_profile(c: httpx.Client, conn, person_id: int, candidates: list[dict]) -> dict | None:
+    """OpenAlex sometimes splits a person into several author profiles with the same ORCID
+    iD, one of them mixed with someone else's papers. The right one is the one that has the
+    person's papers in the library: named on them when authors were matched, or else found
+    by asking OpenAlex which candidate wrote them. Without any evidence, the one with the
+    most works (OpenAlex's own choice for an ORCID iD)."""
+    if len(candidates) <= 1:
+        return candidates[0] if candidates else None
+    oid = lambda a: (a.get("id") or "").rsplit("/", 1)[-1]
+    votes, dois = _library_evidence(conn, person_id)
+    if not any(votes[oid(a)] for a in candidates) and dois:
+        try:
+            r = c.get(f"{OPENALEX_API}/works", params=_openalex_params(
+                filter="authorships.author.id:" + "|".join(oid(a) for a in candidates) + ",doi:" + "|".join(dois[:50]),
+                select="authorships", **{"per-page": 50}))
+            r.raise_for_status()
+            ids = {oid(a) for a in candidates}
+            for w in r.json().get("results") or []:
+                for au in w.get("authorships") or []:
+                    if (aid := ((au.get("author") or {}).get("id") or "").rsplit("/", 1)[-1]) in ids:
+                        votes[aid] += 1
+        except (httpx.HTTPError, ValueError) as e:
+            log.warning("OpenAlex works of person %s: %s", person_id, e)
+    return max(candidates, key=lambda a: (votes[oid(a)], a.get("works_count") or 0))
+
+
 def _openalex_author(a: dict) -> dict:
     stats = a.get("summary_stats") or {}
     p = {"openalex_id": (a.get("id") or "").rsplit("/", 1)[-1] or None, "works_count": a.get("works_count"),
@@ -288,17 +331,20 @@ def _openalex_author(a: dict) -> dict:
     return p
 
 
-def fetch_profile(orcid: str, family: str | None) -> dict:
+def fetch_profile(orcid: str, family: str | None, choose=None) -> dict:
     """What can be found about a person besides their works. Every part is optional."""
     p: dict = {}
     with _client() as c:
         # Current position, from the person's own ORCID record.
         p.update(orcid_position(c, orcid))
-        # Citation figures and topics, only if OpenAlex's author really is this person.
+        # Citation figures and topics, only if OpenAlex's author really is this person (and,
+        # when OpenAlex has several profiles for the iD, the one with their papers: choose).
         try:
-            r = c.get(f"{OPENALEX_API}/authors/orcid:{orcid}", params=_openalex_params())
-            if r.status_code == 200 and _name_matches(r.json().get("display_name"), family):
-                a = r.json()
+            r = c.get(f"{OPENALEX_API}/authors", params=_openalex_params(filter=f"orcid:{orcid}", **{"per-page": 10}))
+            r.raise_for_status()
+            cands = [a for a in r.json().get("results") or [] if _name_matches(a.get("display_name"), family)]
+            a = (choose(c, cands) if choose else max(cands, key=lambda x: x.get("works_count") or 0)) if cands else None
+            if a:
                 stats = a.get("summary_stats") or {}
                 p.update(openalex_id=(a.get("id") or "").rsplit("/", 1)[-1] or None,
                          works_count=a.get("works_count"), cited_by=a.get("cited_by_count"),
@@ -386,6 +432,7 @@ def fill_profiles(conn) -> int:
         if not rows:
             return done
         found: dict[int, dict] = {r["id"]: {} for r in rows}
+        candidates: dict[int, list] = {}
         with _client() as c:
             # OpenAlex: by ORCID iD, and by OpenAlex id for people without one.
             by_orcid = {r["orcid"]: r for r in rows if r["orcid"]}
@@ -403,7 +450,11 @@ def fill_profiles(conn) -> int:
                             else (a.get("id") or "").rsplit("/", 1)[-1]
                         r = keyed.get(key)
                         if r and _name_matches(a.get("display_name"), r["family_name"]):
-                            found[r["id"]].update(_openalex_author(a))
+                            candidates.setdefault(r["id"], []).append(a)
+                # Several profiles for one ORCID iD: the one with the person's papers.
+                for pid, cands in candidates.items():
+                    if best := pick_openalex_profile(c, conn, pid, cands):
+                        found[pid].update(_openalex_author(best))
             except (httpx.HTTPError, ValueError, PeopleError) as e:
                 log.warning("OpenAlex authors: %s", e)
                 return done                # try again later rather than mark them looked at
@@ -476,7 +527,8 @@ def refresh_profile(conn, person_id: int) -> None:
         conn.execute("UPDATE people SET profile_checked = ? WHERE id = ?", (_now().isoformat(timespec="seconds"), person_id))
         conn.commit()
         return
-    p = fetch_profile(row["orcid"], row["family_name"])
+    p = fetch_profile(row["orcid"], row["family_name"],
+                      choose=lambda c, cands: pick_openalex_profile(c, conn, person_id, cands))
     values = {k: p.get(k) for k in PROFILE_FIELDS if k in p}
     values["profile_checked"] = _now().isoformat(timespec="seconds")
     # A photo from Wikimedia Commons, unless one was uploaded (or removed) by hand.
