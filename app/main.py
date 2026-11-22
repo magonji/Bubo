@@ -18,7 +18,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 from starlette.middleware.sessions import SessionMiddleware
 
-from . import annotate, authors, bibtex, citation, db, figures, journals, metadata, pdf, people, storage, textsearch
+from . import annotate, authors, bibtex, citation, db, figures, journals, metadata, ocr, pdf, people, storage, textsearch
 from .config import settings
 
 log = logging.getLogger("bubo")
@@ -53,6 +53,8 @@ settings.contact_email = db.get_settings(_startup_conn).get("contact_email") or 
 people.start_radar()
 # Look for the ORCID iDs of authors of new papers, and once of every paper (authors.py).
 authors.start()
+# Read the text of scanned PDFs already in the library, one at a time (ocr.py).
+ocr.start_backlog()
 # Trim and classify figures extracted by earlier versions (figures.py).
 figures.start_analysing_saved()
 _startup_conn.close()
@@ -177,6 +179,7 @@ def _pdf_added(conn, item_id: int) -> None:
     """A paper has a new PDF: give it its name, then extract its figures in the background."""
     storage.sync_item(conn, item_id)
     figures.schedule(conn, item_id)
+    ocr.schedule(item_id)                 # a scan: read its text in the background
 
 
 def _pdf_path_or_404(conn, item_id: int):
@@ -323,6 +326,7 @@ def _purge(conn, item_id: int) -> None:
     for name in db.delete_item(conn, item_id):
         storage.delete(name)
     figures.remove_files(item_id)
+    ocr.remove(item_id)
 
 
 def purge_expired_trash(conn) -> int:
@@ -861,7 +865,8 @@ def overview(conn: Conn):
 def text_matches(item_id: int, conn: Conn, q: str):
     """Sentences of the item's PDF that contain the search, with their page numbers."""
     path = _pdf_path_or_404(conn, item_id)
-    return textsearch.find(path.read_bytes(), q)
+    row = conn.execute("SELECT file_hash FROM items WHERE id = ?", (item_id,)).fetchone()
+    return textsearch.find(path.read_bytes(), q, pages=ocr.saved_pages(item_id, row["file_hash"] if row else None))
 
 
 @app.get("/api/items/{item_id}/annotations", dependencies=[Auth])

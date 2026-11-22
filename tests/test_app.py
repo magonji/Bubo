@@ -1399,3 +1399,43 @@ def test_older_titles_with_series_joined_names_and_abstract_journals(monkeypatch
     doc = pymupdf.open(); doc.new_page(); doc.set_metadata({"title": "tjv7373.PDF", "author": "Unknown"})
     info = pdf.analyze(doc.tobytes())
     assert info.meta_title is None and info.meta_author is None
+
+
+def test_scanned_pdfs_are_read_with_ocr(client, monkeypatch):
+    """A PDF whose pages are only pictures: its first pages are read when it is added, the
+    rest in the background, and its text can be searched (needs Tesseract; skipped without)."""
+    import shutil
+    import pymupdf
+    from app import config, ocr, pdf, db
+    if not shutil.which("tesseract"):
+        pytest.skip("Tesseract is not installed")
+    monkeypatch.setattr(config.settings, "ocr", True)
+    monkeypatch.setattr(config.settings, "ocr_langs", "eng")
+    ocr._setup.clear()
+    # A two-page "scan": text drawn, then only the picture of each page kept.
+    src = pymupdf.open()
+    for words in ("Tyrosine Modification by Reactive Nitrogen Species\nArchives of Biochemistry and Biophysics 1995",
+                  "Peroxynitrite reacts with tyrosine to form nitrotyrosine in plasma."):
+        page = src.new_page()
+        page.insert_textbox(pymupdf.Rect(60, 80, 540, 400), words, fontsize=18)
+    scan = pymupdf.open()
+    for page in src:
+        pix = page.get_pixmap(dpi=200)
+        out = scan.new_page(width=page.rect.width, height=page.rect.height)
+        out.insert_image(out.rect, stream=pix.tobytes("png"))
+    data = scan.tobytes()
+    info = pdf.analyze(data)
+    assert info.scanned and "Tyrosine" in info.pages[0]               # read at once, to identify it
+    login(client)
+    monkeypatch.setattr(ocr, "schedule", lambda item_id: None)          # run it here instead
+    from app import metadata
+    monkeypatch.setattr(metadata, "identify_pdf", lambda info, **kw: None)
+    r = client.post("/api/items/upload", files={"files": ("scan.pdf", data, "application/pdf")}).json()
+    item_id = r["results"][0]["id"]
+    assert ocr.run(item_id) == "done"
+    assert [i["id"] for i in client.get("/api/items", params={"q": "nitrotyrosine"}).json()] == [item_id]
+    hits = client.get(f"/api/items/{item_id}/text-matches", params={"q": "nitrotyrosine"}).json()
+    assert hits["total"] == 1 and hits["hits"][0]["page"] == 2
+    ocr._setup.clear()
+    client.delete(f"/api/items/{item_id}?permanent=true")
+    assert not list((config.settings.data_dir / "ocr").glob(f"{item_id}-*.json"))

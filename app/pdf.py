@@ -17,6 +17,7 @@ class PdfInfo:
     meta_author: str | None = None
     meta_subject: str | None = None
     guessed_title: str | None = None
+    scanned: bool = False             # pages that are only pictures (their text read by OCR)
 
 
 def is_pdf(data: bytes) -> bool:
@@ -70,6 +71,17 @@ def analyze(data: bytes) -> PdfInfo:
             if total < MAX_FULLTEXT:
                 texts.append(t)
                 total += len(t)
+        # A scan: read its first pages now, to identify it (ocr.py reads the rest later).
+        from . import ocr
+        if len(doc) and ocr.languages() and ocr.needs_ocr(doc):
+            info.scanned = True
+            for i in range(min(ocr.FIRST_PAGES, len(doc))):
+                if ocr.is_scanned(doc[i]):
+                    t = ocr.page_text(doc[i])
+                    if i < len(info.pages):
+                        info.pages[i] = t
+                    if i < len(texts):
+                        texts[i] = t
         info.fulltext = "\n".join(texts)[:MAX_FULLTEXT]
         if len(doc):
             try:

@@ -83,8 +83,9 @@ def _highlight(sentence: str, patterns: list[re.Pattern]) -> tuple[str, int]:
     return ("…" if lo > 0 else "") + text + ("…" if hi < len(sentence) else ""), len(matched)
 
 
-def find(pdf_bytes: bytes, query: str) -> dict:
-    """{"terms": [...], "total": sentences found, "hits": [{"page", "snippet"}]}."""
+def find(pdf_bytes: bytes, query: str, pages: list[str] | None = None) -> dict:
+    """{"terms": [...], "total": sentences found, "hits": [{"page", "snippet"}]}. For a scan,
+    pages is the text OCR read on each page (ocr.saved_pages)."""
     words = terms(query)
     if not words:
         return {"terms": [], "total": 0, "hits": []}
@@ -92,7 +93,7 @@ def find(pdf_bytes: bytes, query: str) -> dict:
     found = []
     with pymupdf.open(stream=pdf_bytes, filetype="pdf") as doc:
         for page_no, page in enumerate(doc, start=1):
-            text = _clean(page.get_text())
+            text = _clean(pages[page_no - 1] if pages and page_no <= len(pages) else page.get_text())
             if not text:
                 continue
             for sentence in _SENTENCE_END.split(text):

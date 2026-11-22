@@ -240,6 +240,7 @@ def init_db() -> None:
         ("authors_checked", "TEXT"),      # when authors' ORCID iDs were looked for (authors.py)
         ("authors_openalex", "TEXT"),     # when authors' OpenAlex ids were looked for (authors.py)
         ("deleted_at", "TEXT"),           # in the trash since (NULL: in the library)
+        ("ocr_status", "TEXT"),           # NULL (not looked at) | none (not a scan) | done | error
     ]:
         if column not in columns:
             conn.execute(f"ALTER TABLE items ADD COLUMN {column} {kind}")
@@ -628,7 +629,7 @@ def update_item(conn, item_id: int, changes: dict) -> None:
 
 
 def set_file(conn, item_id: int, file: dict, fulltext: str) -> None:
-    conn.execute("UPDATE items SET file_name = ?, file_size = ?, file_hash = ?, modified_at = ? "
+    conn.execute("UPDATE items SET file_name = ?, file_size = ?, file_hash = ?, modified_at = ?, ocr_status = NULL "
                  "WHERE id = ?", (file["name"], file["size"], file["hash"], now(), item_id))
     reindex(conn, item_id, fulltext=fulltext)
     conn.commit()

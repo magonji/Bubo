@@ -21,6 +21,10 @@ them from the browser.
   and whose year and first author match. Papers that are not online at all (many book
   chapters) get their title, authors and year from the file name. **Find metadata online**,
   in a paper's menu, does the same search for papers already in your library.
+- **Scanned PDFs** (pages that are only pictures) are read with OCR (Tesseract, in English,
+  German, Spanish and French): the first two pages at once, to identify the paper, and the
+  rest in the background, so their text can be searched and its matches shown. Scans already
+  in your library are read too, one at a time. The PDF itself is not changed.
 - **Supplementary information**: keep any number of SI files with a paper (PDFs,
   spreadsheets, data, videos…). In the upload dialog each file can be declared as a paper or
   as supplementary information for another PDF in the same upload, for the paper open in the
@@ -258,6 +262,8 @@ If you use nginx, raise `client_max_body_size` (e.g. `200m`) so that large PDFs 
 | `BUBO_SECURE_COOKIES` | `true` when served over HTTPS. |
 | `BUBO_SESSION_DAYS` | Session length in days (default 30). |
 | `BUBO_RADAR_HOURS` | How often to look for new publications by the people you follow (default 12; 0 turns it off; "Check now" still works). |
+| `BUBO_OCR` | `1` (default) reads the text of scanned PDFs; `0` turns it off. |
+| `BUBO_OCR_LANGS` | The languages to read scans in, among those in the image (default `eng+deu+spa+fra`). |
 | `BUBO_PROFILE_DAYS` | How often, in days, the authors' affiliations, h-indexes, topics and photos are looked at again (default `3`). |
 | `BUBO_ORCID_LOOKUP` | `1` (default) looks for the ORCID iDs of the authors of your papers in the background; `0` turns it off. |
 | `BUBO_OPENALEX_API_KEY` | Optional. Without a key, OpenAlex lets all requests from your IP address share a small free daily budget; Bubo asks for little, but a [free key](https://openalex.org/settings/api) gives you your own. |
@@ -317,6 +323,7 @@ Layout:
 - `app/figures.py`: finds figures in PDFs and stores them as WebP thumbnails (PyMuPDF, Pillow)
 - `app/cli.py`: maintenance commands
 - `app/authors.py`: every author as a person, and looking for their ORCID iDs
+- `app/ocr.py`: reading the text of scanned PDFs with Tesseract
 - `app/people.py`: following scientists by ORCID iD, profiles and the radar (ORCID, OpenAlex and Wikidata APIs)
 - `docker-entrypoint.sh`: data-folder permissions, then drops privileges
 - `app/static/`: web interface (plain HTML/CSS/JS, no build step); `viewer.js` is the PDF viewer

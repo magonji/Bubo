@@ -25,6 +25,8 @@ class Settings:
     openalex_api_key: str | None = None
     orcid_lookup: bool = True    # look for the ORCID iDs of the authors of new papers
     profile_days: float = 3      # how often authors' affiliations, h-indexes… are looked at again
+    ocr: bool = True             # read the text of scanned PDFs (with Tesseract, when installed)
+    ocr_langs: str = "eng+deu+spa+fra"
 
     @property
     def db_path(self) -> Path:
@@ -74,6 +76,8 @@ def load_settings() -> Settings:
         openalex_api_key=os.environ.get("BUBO_OPENALEX_API_KEY") or None,
         orcid_lookup=os.environ.get("BUBO_ORCID_LOOKUP", "1") not in ("0", "false", "no"),
         profile_days=max(float(os.environ.get("BUBO_PROFILE_DAYS", "3") or 3), 0.5),
+        ocr=os.environ.get("BUBO_OCR", "1") not in ("0", "false", "no"),
+        ocr_langs=os.environ.get("BUBO_OCR_LANGS") or "eng+deu+spa+fra",
     )
 
 
