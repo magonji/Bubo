@@ -446,11 +446,64 @@ async function collectionAction(action, c) {
   } catch (err) { toast(err.message, true); }
 }
 
-function setView(view) {
+// Every change of view goes into the browser's history, so Back (the button, or the swipe
+// on a phone) returns to the view before. Each entry remembers where it came from, for the
+// "‹ People" links at the top of a person's or a journal's page.
+let navDepth = 0;
+const sameView = (a, b) => JSON.stringify(a) === JSON.stringify(b);
+const viewEntry = (view, extra = {}) => ({ bubo: "view", view, depth: navDepth, ...extra });
+
+function setView(view, { fromHistory = false } = {}) {
+  if (!fromHistory && !sameView(view, state.view)) {
+    const from = sectionTitle();
+    navDepth += 1;
+    history.pushState(viewEntry(view, { from }), "", "/");
+  }
   state.view = view;
   renderSidebar();
   loadItems();
   closeDrawer();
+}
+
+window.addEventListener("popstate", (e) => {
+  const s = e.state;
+  if (s?.bubo !== "view") return;
+  navDepth = s.depth || 0;
+  if (!sameView(s.view, state.view)) setView(s.view, { fromHistory: true });
+});
+
+// The way back from a person's or a journal's page: the view before it, or a fallback.
+function backLinkHTML(fallbackLabel, fallbackIcon) {
+  const from = history.state?.bubo === "view" && navDepth > 0 ? history.state.from : null;
+  return `<p class="jh-crumb"><button type="button" class="pv-link back-link" data-act="back" data-fallback="${esc(fallbackLabel)}">
+    ${icon("chevron-left")} ${esc(from || fallbackLabel)}</button></p>`;
+}
+function goBackFrom(fallbackView) {
+  if (navDepth > 0) history.back();
+  else setView(fallbackView);
+}
+
+// iPhone apps added to the home screen have no swipe to go back: a swipe from the left edge
+// does it (Safari keeps its own).
+const STANDALONE = window.matchMedia("(display-mode: standalone)").matches || navigator.standalone === true;
+let edgeSwipe = null;
+document.addEventListener("touchstart", (e) => {
+  edgeSwipe = STANDALONE && narrow.matches && e.touches.length === 1 && e.touches[0].clientX < 24
+    ? { x: e.touches[0].clientX, y: e.touches[0].clientY } : null;
+}, { passive: true });
+document.addEventListener("touchend", (e) => {
+  if (!edgeSwipe) return;
+  const t = e.changedTouches[0], dx = t.clientX - edgeSwipe.x, dy = Math.abs(t.clientY - edgeSwipe.y);
+  edgeSwipe = null;
+  if (dx > 70 && dy < 60) goBack();
+}, { passive: true });
+
+function goBack() {
+  if (document.querySelector("dialog[open]")) return;
+  if (document.body.classList.contains("show-side")) return closeDrawer();
+  if (document.body.classList.contains("show-paper")) return closePaper();      // paper.js
+  if (document.body.classList.contains("show-detail")) return hideDetailPane();
+  if (navDepth > 0) history.back();
 }
 
 // --------------------------------------------------------------------------
@@ -2066,6 +2119,7 @@ async function start() {
   $("#app").classList.remove("hidden");
   try { state.settings = { ...state.settings, ...(await api("/api/settings")) }; } catch {}
   await refresh();
+  if (!/^\/paper\//.test(location.pathname)) history.replaceState(viewEntry(state.view), "", location.pathname);
   routeFromLocation();   // a /paper/<id> address (paper.js)
 }
 

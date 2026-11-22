@@ -123,7 +123,7 @@ function heroHTML(j, p) {
   ].filter(Boolean);
   return `${journalCoverHTML(j, "jc-hero")}
     <div class="jh-text">
-      <p class="jh-crumb"><button type="button" class="pv-link" data-act="journals">${icon("journal")} Journals</button></p>
+      ${backLinkHTML("Journals")}
       <h2>${esc(j.name)}</h2>
       ${where ? `<p class="jh-where">${esc(where)}</p>` : ""}
       <div class="ph-stats">${stats.map(([n, label, tip]) => `<span${tip ? ` title="${esc(tip)}"` : ""}><b>${esc(String(n))}</b> ${esc(label)}</span>`).join("")}</div>
@@ -141,7 +141,7 @@ async function loadJournalProfile(j) {
 }
 
 $("#journal-hero").addEventListener("click", (e) => {
-  if (e.target.closest("[data-act=journals]")) setView({ type: "journals" });
+  if (e.target.closest("[data-act=back]")) goBackFrom({ type: "journals" });
 });
 
 // The journal page needs the gallery's list (covers, years); fetch it if we came straight here.

@@ -234,6 +234,11 @@ function createPaperView(root, mode) {
     showFigure();
   }
 
+  // Another view from the paper: on a phone the paper screen gives way to it (paper.js below).
+  function showView(view) {
+    return pane ? setView(view) : leavePaperTo(view);
+  }
+
   function goTo(n, smooth = true) {
     const track = q(".car-track");
     if (!track || !v.figures[n]) return;
@@ -343,8 +348,7 @@ function createPaperView(root, mode) {
         return openFollowAuthors(i, v.people, () => { loadSidebar(); render(i.id, { keepPlace: true }); });
       case "person": {
         const p = (state.people || []).find((x) => x.id === Number(el.dataset.id));
-        if (!pane) closePaper();
-        return setView({ type: "person", id: Number(el.dataset.id), name: p?.name || el.textContent.trim() });
+        return showView({ type: "person", id: Number(el.dataset.id), name: p?.name || el.textContent.trim() });
       }
       case "abstract": {
         const open = q(".pv-abstract").classList.toggle("open");
@@ -355,9 +359,9 @@ function createPaperView(root, mode) {
       case "copy-doi": copyText(i.doi); return toast("DOI copied");
       case "share": return sharePaper(i);
       case "collections": return chooseCollections(i);
-      case "goto-collection": if (!pane) closePaper(); return setView({ type: "collection", id: Number(el.dataset.id) });
-      case "goto-tag": if (!pane) closePaper(); return setView({ type: "tag", name: el.dataset.tag });
-      case "journal": if (!pane) closePaper(); return openJournal(i.venue.trim());
+      case "goto-collection": return showView({ type: "collection", id: Number(el.dataset.id) });
+      case "goto-tag": return showView({ type: "tag", name: el.dataset.tag });
+      case "journal": return showView({ type: "journal", name: i.venue.trim() });
       case "add-tag": {
         const name = prompt("Add a tag")?.trim();
         if (!name) return;
@@ -557,8 +561,17 @@ async function showPaperScreen(id, keepPlace = false) {
 
 function closePaper() {
   if (history.state?.bubo === "paper" && paperFromApp) return history.back();  // popstate hides it
-  history.replaceState(null, "", "/");
+  history.replaceState(viewEntry(state.view), "", "/");
   hidePaper();
+}
+
+// Going from the paper screen to another view (an author, a journal, a tag…): the paper's
+// entry in the history becomes that view's, so Back returns to the list it was opened from.
+function leavePaperTo(view) {
+  hidePaper();
+  navDepth += 1;
+  history.replaceState(viewEntry(view, { from: sectionTitle() }), "", "/");
+  setView(view, { fromHistory: true });
 }
 
 function hidePaper() {
@@ -581,13 +594,13 @@ function routeFromLocation() {
   const m = location.pathname.match(PAPER_PATH);
   if (!m) return;
   if (narrow.matches) showPaperScreen(Number(m[1]));
-  else { history.replaceState(null, "", "/"); showItem(Number(m[1])); }
+  else { history.replaceState(viewEntry(state.view), "", "/"); showItem(Number(m[1])); }
 }
 
 narrow.addEventListener("change", () => {
   if (narrow.matches || !screenView.state.id) return;
   const id = screenView.state.id;
-  history.replaceState(null, "", "/");
+  history.replaceState(viewEntry(state.view), "", "/");
   hidePaper();
   showItem(id);
 });

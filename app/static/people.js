@@ -301,6 +301,7 @@ function personHero(p) {
         title="${p.photo_url ? "Change the photo" : "Add a photo"}">${icon("camera")}</button>
     </div>
     <div class="ph-text">
+      ${backLinkHTML("People")}
       <h2>${esc(p.name)}</h2>
       ${p.description ? `<p class="ph-desc">${esc(p.description)}</p>` : ""}
       ${where ? `<p class="ph-where">${esc(where)}</p>` : ""}
@@ -416,6 +417,8 @@ $("#works").addEventListener("click", async (e) => {
       loadWorks();
     } else if (act === "follow") {
       openFollowDialog();
+    } else if (act === "back") {
+      goBackFrom({ type: "people" });
     } else if (act === "people-filter") {
       peopleState.filter = el.dataset.filter;
       peopleState.shown = 120;
