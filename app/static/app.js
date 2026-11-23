@@ -1230,14 +1230,24 @@ async function renderOverview() {
     <section class="pv-section"><h2><span>On your reading list</span>${more(ov.to_read.length, ov.to_read_total, "toread")}</h2>
       ${strip(ov.to_read, "Your reading list is empty. Add papers with the bookmark on their sheet, or drag them onto Reading list.")}</section>
     <section class="pv-section"><h2><span>Incomplete metadata</span>${ov.incomplete_total ? `<span class="ov-count">${ov.incomplete_total}</span>` : ""}</h2>
-      ${ov.incomplete.length ? `<div class="pv-details ov-list">${ov.incomplete.map((i) => `
+      ${ov.incomplete.length ? `<div class="pv-details ov-list">${ov.incomplete.map((i) => {
+        const known = i.doi || i.arxiv_id;
+        return `<div class="ov-row-wrap">
         <button type="button" class="ov-row" data-id="${i.id}">
           <span class="thumb thumb-sm">${thumbHTML(i)}</span>
           <span class="ov-row-text"><span class="ov-row-title">${esc(i.title) || "(untitled)"}</span>
             <span class="ov-missing">Missing: ${esc(i.missing.join(", "))}</span></span>
-        </button>`).join("")}</div>` : `<p class="ov-empty">Every paper has its basic details. Well done.</p>`}</section>
+        </button>
+        <button type="button" class="ov-find" data-find="${i.id}" title="${known ? "Refresh metadata" : "Find metadata online"}"
+          aria-label="${known ? "Refresh the metadata of" : "Find metadata online for"} ${esc(i.title || "this paper")}">${icon("refresh")}<span>${known ? "Refresh" : "Find"}</span></button>
+      </div>`; }).join("")}</div>` : `<p class="ov-empty">Every paper has its basic details. Well done.</p>`}</section>
   </div>`;
   $("#detail .overview").addEventListener("click", (e) => {
+    const find = e.target.closest("[data-find]");
+    if (find) {
+      const item = ov.incomplete.find((i) => i.id === Number(find.dataset.find));
+      return item && itemAction("refresh", item);
+    }
     const target = e.target.closest("[data-id]");
     if (target) { e.preventDefault(); return showItem(Number(target.dataset.id)); }
     const view = e.target.closest("[data-view]")?.dataset.view;

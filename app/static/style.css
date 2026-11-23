@@ -1355,3 +1355,16 @@ body.works-view .list-tools { display: none; }
 @media (max-width: 760px), (hover: none) and (max-width: 1100px) {
   .pv-unid-buttons button:not(.link-btn) { min-height: 44px; }
 }
+
+/* Incomplete metadata in the overview: each row can look for its paper online */
+.ov-row-wrap { display: flex; align-items: center; border-top: 1px solid var(--sep); }
+.ov-row-wrap:first-child { border-top: none; }
+.ov-row-wrap .ov-row { flex: 1; min-width: 0; border-top: none; }
+.ov-find { flex: none; display: inline-flex; align-items: center; gap: 5px; margin-right: 10px; min-height: 32px; padding: 4px 10px;
+  border: 1px solid var(--border); border-radius: 999px; background: none; color: var(--accent-strong); font: inherit; font-size: 12.5px;
+  font-weight: 600; cursor: pointer; }
+.ov-find:hover { border-color: var(--accent); background: var(--hover); }
+.ov-find .icon { width: 14px; height: 14px; }
+@media (max-width: 760px), (hover: none) and (max-width: 1100px) {
+  .ov-find { min-height: 40px; }
+}
