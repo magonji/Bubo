@@ -7,6 +7,12 @@ them from the browser.
 
 ## Features
 
+- **Home**, the page Bubo opens on: the library at a glance in the whole window but the
+  sidebar. Its figures (papers, to read, new on the radar, journals, people) lead to each
+  section, under them are the papers added most recently, your reading list, what is new on
+  the radar, papers with incomplete metadata (with **Find** for each), your journals and the
+  people you follow. In Settings, **Open Bubo on** chooses between Home, My library and the
+  Radar. The owl in the header also leads home.
 - **Add papers** with the **+ Add** button: one box accepts a DOI (or doi.org link), an arXiv ID,
   a PubMed ID or a publisher's URL and detects which it is; if an open-access PDF is available,
   it is downloaded automatically. The same dialog takes PDFs by drag and drop (or choose them),

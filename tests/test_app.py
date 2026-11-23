@@ -362,7 +362,7 @@ def test_citations_and_settings(client):
     from app import citation
     assert client.get("/api/settings").json() == {"citation_style": "apa", "include_subcollections": False,
                                                   "new_items_to_read": False, "contact_email": "",
-                                                  "contact_email_env": ""}
+                                                  "contact_email_env": "", "start_view": "home"}
     item = client.post("/api/items", json={**{k: v for k, v in citation.EXAMPLE.items()}}).json()
 
     r = client.get(f"/api/items/{item['id']}/citation").json()
@@ -1448,3 +1448,18 @@ def test_the_interface_is_checked_for_changes_on_every_visit(client):
         if path.startswith("/static/"):          # unchanged files: a quick "not modified"
             assert client.get(path, headers={"If-None-Match": r.headers["etag"]}).status_code == 304
     assert client.get("/static/owl.svg").headers["cache-control"] == "no-cache"
+
+
+def test_home_page_and_the_page_bubo_opens_on(client):
+    login(client)
+    assert client.get("/api/settings").json()["start_view"] == "home"
+    item = client.post("/api/items", json={"title": "Owls at home", "venue": "Journal of Owls", "year": 2024,
+                                           "authors": [{"given": "Ada", "family": "Lovelace"}]}).json()
+    h = client.get("/api/home").json()
+    assert h["counts"]["papers"] >= 1 and h["counts"]["journals"] >= 1 and h["counts"]["people"] >= 1
+    assert item["id"] in [i["id"] for i in h["recent"]]
+    assert {"radar", "journals", "following", "incomplete", "to_read"} <= set(h)
+    assert client.patch("/api/settings", json={"start_view": "radar"}).json()["start_view"] == "radar"
+    assert client.patch("/api/settings", json={"start_view": "nowhere"}).status_code == 422
+    client.patch("/api/settings", json={"start_view": "home"})
+    client.delete(f"/api/items/{item['id']}?permanent=true")

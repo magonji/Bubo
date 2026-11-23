@@ -13,6 +13,7 @@ const ICONS = {
   library: '<path d="M4 4h4v16H4zM10 4h4v16h-4zM16.5 5.2l3.4-.9 3.1 15-3.4.9z"/>',
   inbox: '<path d="M3 13h5l1.5 3h5L16 13h5"/><path d="M5.5 5h13L21 13v6H3v-6z"/>',
   bookmark: '<path d="M6 4h12v17l-6-4.2L6 21z"/>',
+  home: '<path d="M4 11l8-7 8 7"/><path d="M6 9.5V20h12V9.5"/><path d="M10 20v-5h4v5"/>',
   people: '<circle cx="9" cy="8" r="3.2"/><path d="M3 19c.6-3.2 3-5 6-5s5.4 1.8 6 5"/><circle cx="17" cy="9" r="2.6"/><path d="M15.5 14.2c2.6-.4 4.8 1.1 5.5 4.3"/>',
   journal: '<path d="M5 4h11a2 2 0 0 1 2 2v14H7a2 2 0 0 1-2-2z"/><path d="M18 8h1a1 1 0 0 1 1 1v9a2 2 0 0 1-2 2"/><path d="M8 8h7M8 11.5h7M8 15h4"/>',
   "bookmark-check": '<path d="M6 4h12v17l-6-4.2L6 21z"/><path d="M9.2 10.2l2 2 3.6-3.6"/>',
@@ -204,6 +205,8 @@ async function loadSidebar() {
 
 async function loadItems() {
   // A followed person's publications, or the radar (people.js).
+  document.body.classList.toggle("home-view", state.view.type === "home");
+  if (state.view.type === "home") return loadHome();                // home.js
   if (["person", "radar", "people"].includes(state.view.type)) return loadWorks();
   if (state.view.type === "journals") return loadJournals();   // journals.js
   leaveWorksView();
@@ -567,7 +570,7 @@ function sectionTitle() {
   const v = state.view;
   return { all: "My library", unfiled: "Unfiled items", toread: "Reading list",
     collection: v.name, tag: `Tag: ${v.name}`, radar: "Radar", person: v.name, people: "People",
-    journals: "Journals", journal: v.name, trash: "Trash" }[v.type];
+    journals: "Journals", journal: v.name, trash: "Trash", home: "Home" }[v.type];
 }
 function viewTitle() {
   return state.q ? `${sectionTitle()} — “${state.q}”` : sectionTitle();
@@ -1006,6 +1009,7 @@ function syncSearchClear() {
 async function applySearch(q) {
   clearTimeout(searchTimer);
   state.q = q;
+  if (q && state.view.type === "home") return setView({ type: "all" });   // a search from home: the library
   await loadItems();
   if (state.selected != null) renderDetail(state.items.find((i) => i.id === state.selected) || null);
 }
@@ -1546,6 +1550,13 @@ async function openSettings() {
   dlg.innerHTML = `<form method="dialog">
     <h3 id="settings-title" tabindex="-1" autofocus>Settings</h3>
     <fieldset class="settings-group">
+      <legend>Open Bubo on</legend>
+      <div class="settings-choice" role="radiogroup">${[["home", "Home", "Your library at a glance"], ["all", "My library", "All your papers"],
+        ["radar", "Radar", "What the people you follow have published"]].map(([v, label, note]) => `
+        <label class="settings-radio"><input type="radio" name="start_view" value="${v}" ${(settings.start_view || "home") === v ? "checked" : ""}>
+          <span>${label} <span class="muted">${note}</span></span></label>`).join("")}</div>
+    </fieldset>
+    <fieldset class="settings-group">
       <legend>New papers</legend>
       <label class="settings-check"><input type="checkbox" class="switch" role="switch" name="new_items_to_read"
         ${settings.new_items_to_read ? "checked" : ""}>
@@ -1582,6 +1593,7 @@ async function openSettings() {
     const changes = {
       citation_style: dlg.querySelector('input[name="citation_style"]:checked')?.value,
       new_items_to_read: dlg.querySelector('input[name="new_items_to_read"]').checked,
+      start_view: dlg.querySelector('input[name="start_view"]:checked')?.value,
       contact_email: dlg.querySelector('input[name="contact_email"]').value.trim(),
     };
     try {
@@ -2128,6 +2140,8 @@ async function start() {
   $("#login").classList.add("hidden");
   $("#app").classList.remove("hidden");
   try { state.settings = { ...state.settings, ...(await api("/api/settings")) }; } catch {}
+  // The page chosen in Settings (the home page unless said otherwise).
+  if (!/^\/paper\//.test(location.pathname)) state.view = { type: state.settings.start_view || "home" };
   await refresh();
   if (!/^\/paper\//.test(location.pathname)) history.replaceState(viewEntry(state.view), "", location.pathname);
   routeFromLocation();   // a /paper/<id> address (paper.js)

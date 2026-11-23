@@ -155,10 +155,12 @@ class SettingsIn(BaseModel):
     new_items_to_read: bool | None = None
     # Whether a collection's view also lists the items in its subcollections.
     include_subcollections: bool | None = None
+    # The page Bubo opens on: the home page, the library or the radar.
+    start_view: Literal["home", "all", "radar"] | None = None
 
 
 DEFAULT_SETTINGS = {"citation_style": citation.DEFAULT_STYLE, "include_subcollections": False,
-                    "new_items_to_read": False, "contact_email": ""}
+                    "new_items_to_read": False, "contact_email": "", "start_view": "home"}
 
 
 def _settings(conn) -> dict:
@@ -876,6 +878,30 @@ def overview(conn: Conn):
     }
     return {"counts": counts, "recent": items[:10], "to_read": to_read[:10], "to_read_total": len(to_read),
             "incomplete": incomplete[:6], "incomplete_total": len(incomplete)}
+
+
+@app.get("/api/home", dependencies=[Auth])
+def home(conn: Conn):
+    """The home page: the library at a glance, with what is new and what needs doing."""
+    items = db.list_items(conn, sort="added")
+    to_read = db.list_items(conn, to_read=True, sort="to_read_desc")
+    incomplete = [{**i, "missing": db.missing_details(i)} for i in items if db.is_incomplete(i)]
+    following = people.list_people(conn)
+    radar = people.radar(conn)
+    shelf = sorted(journals.list_journals(conn), key=lambda j: (-j["papers"], j["name"].lower()))
+    counts = db.library_counts(conn)
+    return {
+        "counts": {
+            "papers": len(items), "with_pdf": sum(1 for i in items if i["has_file"]), "to_read": len(to_read),
+            "journals": counts["journals"], "trash": counts["trash"],
+            "people": conn.execute(f"SELECT COUNT(*) FROM people p WHERE {people.IN_LIBRARY}").fetchone()[0],
+            "following": len(following), "radar_unseen": people.radar_unseen(conn), "radar": len(radar),
+            "collections": conn.execute("SELECT COUNT(*) FROM collections").fetchone()[0],
+        },
+        "recent": items[:12], "to_read": to_read[:12],
+        "incomplete": incomplete[:8], "incomplete_total": len(incomplete),
+        "radar": radar[:6], "journals": shelf[:8], "following": following[:12],
+    }
 
 
 @app.get("/api/items/{item_id}/text-matches", dependencies=[Auth])
