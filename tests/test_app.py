@@ -575,19 +575,19 @@ def test_pubmed_ids(client, monkeypatch):
     client.delete(f"/api/items/{item['id']}?permanent=true")
 
 
-def test_find_pdf_and_overview(client, monkeypatch):
+def test_find_pdf_and_home_lists(client, monkeypatch):
     login(client)
     for it in client.get("/api/items").json():
         client.delete(f"/api/items/{it['id']}?permanent=true")
     full = client.post("/api/items", json={"title": "Complete", "authors": [{"family": "A"}], "year": 2020,
                                            "item_type": "misc", "doi": "10.1/x", "to_read": True}).json()
     bare = client.post("/api/items", json={"title": "New item"}).json()
-    ov = client.get("/api/overview").json()
+    ov = client.get("/api/home").json()
     assert [i["title"] for i in ov["recent"]] == ["New item", "Complete"]
-    assert [i["title"] for i in ov["to_read"]] == ["Complete"] and ov["to_read_total"] == 1
+    assert [i["title"] for i in ov["to_read"]] == ["Complete"] and ov["counts"]["to_read"] == 1
     assert [i["title"] for i in ov["incomplete"]] == ["New item"] and ov["incomplete_total"] == 1
     assert ov["incomplete"][0]["missing"] == ["title", "authors", "year", "journal"]
-    assert ov["counts"] == {"papers": 2, "with_pdf": 0, "to_read": 1, "collections": 0}
+    assert ov["counts"]["papers"] == 2 and ov["counts"]["with_pdf"] == 0
 
     assert client.post(f"/api/items/{bare['id']}/find-pdf").status_code == 422
     monkeypatch.setattr(metadata, "find_pdf", lambda item: None)

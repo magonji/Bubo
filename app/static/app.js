@@ -1093,12 +1093,12 @@ function renderDetail(item) {
     state.editing = null;
     box.classList.remove("editing");
     paneView.forget();
-    return renderOverview();
+    return renderNoSelection();
   }
+  document.body.classList.remove("no-selection");
   if (state.editing !== item.id) state.editing = null;
   if (narrow.matches || state.editing === item.id) return renderEditForm(item);
   box.classList.remove("editing");
-  overviewToken++;
   paneView.render(item.id, { keepPlace: paneView.state.id === item.id });
 }
 
@@ -1206,66 +1206,16 @@ function renderEditForm(item) {
   });
 }
 
-// Shown when nothing is selected: recent papers, the reading list and what needs fixing.
-let overviewToken = 0;
-async function renderOverview() {
-  const token = ++overviewToken;
-  let ov;
-  try { ov = await api("/api/overview"); } catch { return; }
-  if (token !== overviewToken || state.selectedIds.size) return;
-  // In the style of the paper sheet (paper.js): cards with figures, a details-like list.
-  const card = (i) => `<a class="card" href="/paper/${i.id}" data-id="${i.id}">
-      <div class="thumb">${thumbHTML(i)}</div>
-      <div class="c-title">${esc(i.title) || "(untitled)"}</div>
-      <div class="c-meta">${esc([authorsShort(i.authors), i.year].filter(Boolean).join(" · ") || "No details yet")}</div></a>`;
-  const strip = (items, empty) => items.length
-    ? `<div class="pv-strip">${items.map(card).join("")}</div>` : `<p class="ov-empty">${empty}</p>`;
-  const more = (shown, total, view) => total > shown
-    ? `<button type="button" class="pv-link ov-all" data-view="${view}">All ${total}</button>` : "";
-  const c = ov.counts;
-  const stat = (n, label, view) => `<button type="button" class="ov-stat"${view ? ` data-view="${view}"` : " disabled"}>
-      <span class="ov-n">${n}</span><span class="ov-label">${label}</span></button>`;
-  $("#detail").innerHTML = `<div class="pv pv-pane overview">
-    <div class="pv-bar"><span class="pv-bar-title">Library</span></div>
-    <h1 class="pv-title">Library overview</h1>
-    <div class="ov-stats">
-      ${stat(c.papers, c.papers === 1 ? "paper" : "papers", "all")}
-      ${stat(c.with_pdf, "with a PDF")}
-      ${stat(c.to_read, "to read", "toread")}
-    </div>
-    <section class="pv-section"><h2>Recently added</h2>
-      ${strip(ov.recent, "Nothing yet: press Add to bring in your first paper.")}</section>
-    <section class="pv-section"><h2><span>On your reading list</span>${more(ov.to_read.length, ov.to_read_total, "toread")}</h2>
-      ${strip(ov.to_read, "Your reading list is empty. Add papers with the bookmark on their sheet, or drag them onto Reading list.")}</section>
-    <section class="pv-section"><h2><span>Incomplete metadata</span>${ov.incomplete_total ? `<span class="ov-count">${ov.incomplete_total}</span>` : ""}</h2>
-      ${ov.incomplete.length ? `<div class="pv-details ov-list">${ov.incomplete.map((i) => {
-        const known = i.doi || i.arxiv_id;
-        return `<div class="ov-row-wrap">
-        <button type="button" class="ov-row" data-id="${i.id}">
-          <span class="thumb thumb-sm">${thumbHTML(i)}</span>
-          <span class="ov-row-text"><span class="ov-row-title">${esc(i.title) || "(untitled)"}</span>
-            <span class="ov-missing">Missing: ${esc(i.missing.join(", "))}</span></span>
-        </button>
-        <button type="button" class="ov-find" data-find="${i.id}" title="${known ? "Refresh metadata" : "Find metadata online"}"
-          aria-label="${known ? "Refresh the metadata of" : "Find metadata online for"} ${esc(i.title || "this paper")}">${icon("refresh")}<span>${known ? "Refresh" : "Find"}</span></button>
-      </div>`; }).join("")}</div>` : `<p class="ov-empty">Every paper has its basic details. Well done.</p>`}</section>
-  </div>`;
-  $("#detail .overview").addEventListener("click", (e) => {
-    const find = e.target.closest("[data-find]");
-    if (find) {
-      const item = ov.incomplete.find((i) => i.id === Number(find.dataset.find));
-      return item && itemAction("refresh", item);
-    }
-    const target = e.target.closest("[data-id]");
-    if (target) { e.preventDefault(); return showItem(Number(target.dataset.id)); }
-    const view = e.target.closest("[data-view]")?.dataset.view;
-    if (view) setView({ type: view });
-  });
+// Nothing selected: no item pane on desktop, and the list takes the whole width (the home page
+// shows the library at a glance).
+function renderNoSelection() {
+  $("#detail").innerHTML = "";
+  document.body.classList.add("no-selection");
 }
 
 // Several papers selected: bulk actions.
 function renderMulti() {
-  overviewToken++;
+  document.body.classList.remove("no-selection");
   state.editing = null;
   $("#detail").classList.remove("editing");
   paneView.forget();

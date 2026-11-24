@@ -877,25 +877,10 @@ def add_work(work_id: int, conn: Conn, body: AddWorkIn | None = None):
     return result
 
 
-@app.get("/api/overview", dependencies=[Auth])
-def overview(conn: Conn):
-    """Shown in the item pane when nothing is selected."""
-    items = db.list_items(conn, sort="added")
-    incomplete = [{**i, "missing": db.missing_details(i)} for i in items if db.is_incomplete(i)]
-    to_read = db.list_items(conn, to_read=True, sort="year")
-    counts = {
-        "papers": len(items),
-        "with_pdf": sum(1 for i in items if i["has_file"]),
-        "to_read": len(to_read),
-        "collections": conn.execute("SELECT COUNT(*) FROM collections").fetchone()[0],
-    }
-    return {"counts": counts, "recent": items[:10], "to_read": to_read[:10], "to_read_total": len(to_read),
-            "incomplete": incomplete[:6], "incomplete_total": len(incomplete)}
-
-
 @app.get("/api/home", dependencies=[Auth])
 def home(conn: Conn):
-    """The home page: the library at a glance, with what is new and what needs doing."""
+    """The home page: the library at a glance, with what is new and what needs doing. (The item
+    pane is empty when nothing is selected: the home page took the place of its overview.)"""
     items = db.list_items(conn, sort="added")
     to_read = db.list_items(conn, to_read=True, sort="to_read_desc")
     incomplete = [{**i, "missing": db.missing_details(i)} for i in items if db.is_incomplete(i)]

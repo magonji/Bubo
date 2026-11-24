@@ -240,21 +240,8 @@ mark { background: var(--mark); color: inherit; border-radius: 2px; padding: 0 1
 }
 .detail-match:hover { background: var(--hover); border-left-color: var(--accent); }
 
-/* Overview (item pane with nothing selected) and multiple selection */
-.overview h2 { font-size: 15px; margin: 0 0 14px; }
-/* The library overview, in the style of the paper sheet */
-.overview.pv .pv-title { margin-top: 0; }
-.overview .pv-section h2 { display: flex; align-items: center; gap: 8px; }
-.overview .pv-section h2 .ov-all { margin-left: auto; min-height: 0; font-size: 13px; }
+/* Lists of papers on the home page (home.js) */
 .ov-count { margin-left: auto; font-size: 12px; font-weight: 600; color: var(--muted); }
-.ov-stats { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; margin-top: 14px; }
-.ov-stat { display: flex; flex-direction: column; align-items: flex-start; gap: 2px; padding: 10px 12px; border-radius: 10px;
-  border: 1px solid var(--border); background: var(--panel); text-align: left; cursor: pointer; }
-.ov-stat:not(:disabled):hover { border-color: var(--accent); background: var(--panel); }
-.ov-stat:disabled { cursor: default; opacity: 1; }
-.ov-n { font-family: "Fraunces", Georgia, serif; font-weight: 600; font-size: 24px; line-height: 1.1; color: var(--text); }
-.ov-label { font-size: 12px; color: var(--muted); }
-.overview .ov-empty { margin: 0; padding: 0; color: var(--muted); font-size: 13.5px; line-height: 1.5; }
 .ov-list { display: flex; flex-direction: column; }
 .ov-row { display: flex; align-items: center; gap: 12px; width: 100%; padding: 8px 12px; border: none; border-top: 1px solid var(--sep);
   border-radius: 0; background: transparent; text-align: left; white-space: normal; }
@@ -1373,9 +1360,13 @@ body.works-view .list-tools { display: none; }
    Home: the library at a glance, in the whole window but the sidebar
    ========================================================================== */
 @media (min-width: 761px) and (hover: hover), (min-width: 1101px) {
-  body.home-view .panes { grid-template-columns: 230px minmax(0, 1fr); }
-  body.home-view .detail-pane { display: none; }
   body.home-view .list-head { display: none; }
+  /* The home page, and any list with nothing selected: no item pane, the list in its place. */
+  body.home-view .panes, body.no-selection .panes { grid-template-columns: 230px minmax(0, 1fr); }
+  body.home-view .detail-pane, body.no-selection .detail-pane { display: none; }
+}
+@media (min-width: 761px) and (max-width: 1100px) and (hover: hover) {
+  body.home-view .panes, body.no-selection .panes { grid-template-columns: 200px minmax(0, 1fr); }
 }
 .brand { cursor: pointer; }
 .home { max-width: 1240px; margin: 0 auto; padding: 28px 32px 48px; }
