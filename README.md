@@ -90,6 +90,8 @@ them from the browser.
   become one person's, under the name you choose, and Bubo remembers the other spelling for
   papers you add later. The papers' author lists stay as printed. People with different ORCID
   iDs cannot be merged.
+- **My papers**: find yourself in People and choose **This is me**. The papers you are an
+  author of then get an entry of their own in the sidebar and a row on the home page.
 - **Journals** gathers the journals your papers were published in as a shelf of covers, each
   made from the figures of your latest papers in it. A journal's page lists your papers in it
   under its publisher, h-index, citations per article and open-access status (from OpenAlex,

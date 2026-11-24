@@ -136,10 +136,10 @@ def link_item(conn, item_id: int) -> None:
 
 
 def drop_orphans(conn) -> None:
-    """People you do not follow who are no longer an author of any paper (not even one in
-    the trash) go, with their photo."""
+    """People you do not follow, other than you, who are no longer an author of any paper
+    (not even one in the trash) go, with their photo."""
     for (pid,) in conn.execute(
-            "SELECT id FROM people WHERE followed = 0 "
+            "SELECT id FROM people WHERE followed = 0 AND IFNULL(is_me, 0) = 0 "
             "AND id NOT IN (SELECT person_id FROM item_authors)").fetchall():
         conn.execute("DELETE FROM people WHERE id = ?", (pid,))
         people.delete_photo(pid)
@@ -150,7 +150,7 @@ def merge_by_name(conn) -> None:
     that person."""
     rows = conn.execute(
         "SELECT p.id, q.id AS target FROM people p JOIN people q ON q.name_key = p.name_key "
-        "AND q.orcid IS NOT NULL WHERE p.orcid IS NULL AND p.followed = 0 "
+        "AND q.orcid IS NOT NULL WHERE p.orcid IS NULL AND p.followed = 0 AND IFNULL(p.is_me, 0) = 0 "
         "AND (SELECT COUNT(*) FROM people r WHERE r.name_key = p.name_key AND r.orcid IS NOT NULL) = 1").fetchall()
     for r in rows:
         conn.execute("UPDATE OR IGNORE item_authors SET person_id = ? WHERE person_id = ?", (r["target"], r["id"]))
@@ -224,13 +224,14 @@ def merge(conn, keep_id: int, other_id: int, name: str | None = None) -> None:
     people.delete_photo(other_id) if other["photo"] and keep["photo"] else None
     orcid = keep["orcid"] or other["orcid"]
     followed = int(bool(keep["followed"] or other["followed"]))
+    is_me = int(keep["is_me"] == 1 or other["is_me"] == 1)
     conn.execute("DELETE FROM people WHERE id = ?", (other_id,))      # before taking its iD (unique)
     if name and name.strip():
         given, _, family = name.strip().rpartition(" ")
         sets.update(name=name.strip(), family_name=family or name.strip(), name_key=name_key(given, family or name), name_fixed=1)
         if keep["name_key"] and keep["name_key"] != sets["name_key"]:
             keys.add(keep["name_key"])
-    sets.update(orcid=orcid, followed=followed)
+    sets.update(orcid=orcid, followed=followed, is_me=is_me)
     conn.execute(f"UPDATE people SET {', '.join(f'{k} = ?' for k in sets)} WHERE id = ?", (*sets.values(), keep_id))
     new_key = conn.execute("SELECT name_key FROM people WHERE id = ?", (keep_id,)).fetchone()["name_key"]
     for k in keys - {new_key}:

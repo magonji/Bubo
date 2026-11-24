@@ -199,7 +199,7 @@ function peopleTableHTML(list) {
       return `<tr data-person-card="${p.id}" tabindex="0"${p.followed ? ' class="is-followed"' : ""}>
         <td class="pt-photo">${avatarHTML(p, "avatar-row")}</td>
         <td class="pt-given">${esc(n.given)}</td>
-        <td class="pt-family"><span class="pt-fam">${esc(n.family)}</span>${p.followed ? `<span class="pt-following" title="You follow them">${icon("radar")}</span>` : ""}
+        <td class="pt-family"><span class="pt-fam">${esc(n.family)}</span>${p.is_me ? `<span class="pt-you">You</span>` : ""}${p.followed ? `<span class="pt-following" title="You follow them">${icon("radar")}</span>` : ""}
           ${p.affiliation ? `<span class="pt-aff-under">${esc(p.affiliation)}</span>` : ""}</td>
         <td class="pt-affiliation">${esc(p.affiliation || "")}</td>
         <td class="pt-h_index num">${p.h_index ?? ""}</td>
@@ -302,7 +302,7 @@ function personHero(p) {
     </div>
     <div class="ph-text">
       ${backLinkHTML("People")}
-      <h2>${esc(p.name)}</h2>
+      <h2>${esc(p.name)}${p.is_me ? ` <span class="ph-you">You</span>` : ""}</h2>
       ${p.description ? `<p class="ph-desc">${esc(p.description)}</p>` : ""}
       ${where ? `<p class="ph-where">${esc(where)}</p>` : ""}
       <div class="ph-stats">${stats.map(([n, l]) => `<span><b>${n}</b> ${l}</span>`).join("")}</div>
@@ -316,6 +316,9 @@ function personHero(p) {
            <button type="button" data-act="unfollow">Unfollow</button>`
         : `<button type="button" class="primary" data-act="follow-person">${icon("person-plus")} Follow</button>
            <span class="muted ph-follow-note">${p.orcid ? "Their new publications will appear on your radar." : "Needs their ORCID iD."}</span>`}
+        ${p.is_me
+          ? `<button type="button" data-act="not-me" title="Your papers are those this person is an author of">${icon("user")} Not me</button>`
+          : `<button type="button" data-act="me" title="Their papers will be listed under My papers">${icon("user")} This is me</button>`}
       </div>
     </div>
   </div>`;
@@ -354,6 +357,7 @@ function renderPeoplePage() {
     ${shown.length && peopleState.view === "table" ? peopleTableHTML(shown) : shown.length ? `<div class="people-grid">${shown.map((p) => `
       <a class="person-card${p.followed ? " is-followed" : ""}" href="#" data-person-card="${p.id}">
         <span class="pc-photo">${avatarHTML(p, "avatar-card")}${p.unseen ? `<span class="badge badge-tl pc-new">${p.unseen} new</span>`
+          : p.is_me ? `<span class="badge badge-tl pc-you">You</span>`
           : p.followed ? `<span class="badge badge-tl pc-following" title="You follow them">${icon("radar")}</span>` : ""}</span>
         <span class="pc-name">${esc(p.name)}</span>
         <span class="pc-where">${esc(p.affiliation || "")}</span>
@@ -442,6 +446,14 @@ $("#works").addEventListener("click", async (e) => {
       el.innerHTML = "Looking up their publications…";
       const r = await api(`/api/people/${p.id}/follow`, { json: {} });
       toast(`Following ${r.name}: ${r.works} publication${r.works === 1 ? "" : "s"}`);
+      await loadSidebar();
+      loadWorks();
+    } else if (act === "me" || act === "not-me") {
+      const p = worksState.person, on = act === "me";
+      const before = state.counts?.me;
+      if (on && before && before.id !== p.id && !confirm(`You said you are ${before.name}. Are you ${p.name} instead?`)) return;
+      await api(`/api/people/${p.id}/me`, { json: { on } });
+      toast(on ? `You are ${p.name}: your papers are under My papers` : `${p.name} is no longer you`);
       await loadSidebar();
       loadWorks();
     } else if (act === "photo") {

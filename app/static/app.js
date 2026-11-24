@@ -14,6 +14,7 @@ const ICONS = {
   inbox: '<path d="M3 13h5l1.5 3h5L16 13h5"/><path d="M5.5 5h13L21 13v6H3v-6z"/>',
   bookmark: '<path d="M6 4h12v17l-6-4.2L6 21z"/>',
   home: '<path d="M4 11l8-7 8 7"/><path d="M6 9.5V20h12V9.5"/><path d="M10 20v-5h4v5"/>',
+  user: '<circle cx="12" cy="8" r="3.6"/><path d="M5 20c.8-3.8 3.6-6 7-6s6.2 2.2 7 6"/>',
   people: '<circle cx="9" cy="8" r="3.2"/><path d="M3 19c.6-3.2 3-5 6-5s5.4 1.8 6 5"/><circle cx="17" cy="9" r="2.6"/><path d="M15.5 14.2c2.6-.4 4.8 1.1 5.5 4.3"/>',
   journal: '<path d="M5 4h11a2 2 0 0 1 2 2v14H7a2 2 0 0 1-2-2z"/><path d="M18 8h1a1 1 0 0 1 1 1v9a2 2 0 0 1-2 2"/><path d="M8 8h7M8 11.5h7M8 15h4"/>',
   "bookmark-check": '<path d="M6 4h12v17l-6-4.2L6 21z"/><path d="M9.2 10.2l2 2 3.6-3.6"/>',
@@ -218,6 +219,7 @@ async function loadItems() {
   }
   if (state.view.type === "unfiled") p.set("unfiled", "true");
   if (state.view.type === "toread") p.set("to_read", "true");
+  if (state.view.type === "mine") p.set("mine", "true");
   if (state.view.type === "tag") p.set("tag", state.view.name);
   if (state.view.type === "journal") { p.set("venue", state.view.name); await ensureJournalsList(); }
   if (state.view.type === "trash") p.set("trash", "true");
@@ -256,6 +258,8 @@ function renderSidebar() {
   $("#count-toread").textContent = counts.to_read || "";
   $("#count-journals").textContent = counts.journals || "";
   $("#count-trash").textContent = counts.trash || "";
+  $("#count-mine").textContent = counts.mine || "";
+  $("#side-mine").classList.toggle("hidden", !counts.me);
 
   const byParent = {};
   for (const c of state.collections) (byParent[c.parent_id ?? "root"] ||= []).push(c);
@@ -568,7 +572,7 @@ function authorsShort(a) {
 
 function sectionTitle() {
   const v = state.view;
-  return { all: "My library", unfiled: "Unfiled items", toread: "Reading list",
+  return { all: "My library", unfiled: "Unfiled items", toread: "Reading list", mine: "My papers",
     collection: v.name, tag: `Tag: ${v.name}`, radar: "Radar", person: v.name, people: "People",
     journals: "Journals", journal: v.name, trash: "Trash", home: "Home" }[v.type];
 }

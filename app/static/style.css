@@ -1440,3 +1440,10 @@ body.works-view .list-tools { display: none; }
 .settings-radio { display: flex; align-items: flex-start; gap: 10px; min-height: 32px; font-size: 14px; cursor: pointer; }
 .settings-radio input { flex: none; width: 18px; height: 18px; margin-top: 1px; accent-color: var(--accent); }
 .settings-radio .muted { display: block; font-size: 12.5px; }
+
+/* You: the author you said you are (people.set_me). */
+.ph-you, .pt-you, .pc-you { display: inline-block; font-size: 11px; font-weight: 600; letter-spacing: .02em; text-transform: uppercase;
+  background: var(--accent); color: #1A1205; border-radius: 999px; padding: 2px 8px; vertical-align: middle; }
+.ph-you { font-size: 12px; margin-left: 6px; }
+.pt-you { margin-left: 6px; font-size: 10px; padding: 1px 6px; }
+.pc-you { background: var(--accent) !important; color: #1A1205 !important; }

@@ -89,6 +89,10 @@ function renderHome() {
     </div>
     <div class="hm-grid">
       ${section("Recently added", strip(ov.recent, "Nothing yet: press Add to bring in your first paper."), all("all", "My library"), "hm-wide")}
+      ${ov.me ? section("Your papers", strip(ov.mine, "None of the papers in your library is yours yet."),
+          c.mine > ov.mine.length ? all("mine", `All ${c.mine}`) : all("mine", "My papers"), "hm-wide")
+        : c.papers ? section("Your papers", `<p class="ov-empty">Are you an author of some of these papers? Find yourself in
+          <button type="button" class="link-btn" data-view="people">People</button> and choose <b>This is me</b>: your papers will have a page of their own.</p>`, "", "hm-wide") : ""}
       ${section("On your reading list", strip(ov.to_read, "Your reading list is empty. Add papers with the bookmark on their sheet."),
         c.to_read > ov.to_read.length ? all("toread", `All ${c.to_read}`) : "", "hm-wide")}
       ${section("New on your radar", radar, c.radar ? all("radar", "Radar") : "")}

@@ -493,7 +493,8 @@ def test_reading_list(client):
     b = client.post("/api/items", json={"title": "Already read"}).json()
     assert a["to_read"] and a["to_read_at"] and not b["to_read"]
     assert [i["title"] for i in client.get("/api/items", params={"to_read": True}).json()] == ["Later"]
-    assert client.get("/api/library-counts").json() == {"all": 2, "unfiled": 2, "to_read": 1, "journals": 0, "trash": 0}
+    assert client.get("/api/library-counts").json() == {"all": 2, "unfiled": 2, "to_read": 1, "journals": 0, "trash": 0,
+                                                       "mine": 0, "me": None}
 
     # Adding again keeps the original date; removing takes it off the list.
     again = client.patch(f"/api/items/{a['id']}", json={"to_read": True}).json()
@@ -1463,3 +1464,32 @@ def test_home_page_and_the_page_bubo_opens_on(client):
     assert client.patch("/api/settings", json={"start_view": "nowhere"}).status_code == 422
     client.patch("/api/settings", json={"start_view": "home"})
     client.delete(f"/api/items/{item['id']}?permanent=true")
+
+
+def test_you_can_say_which_author_you_are(client):
+    login(client)
+    one = client.post("/api/items", json={"title": "Mine", "year": 2020, "authors": [{"given": "Ada", "family": "Lovelace"}]}).json()
+    client.post("/api/items", json={"title": "Not mine", "authors": [{"given": "Bo", "family": "Plain"}]})
+    client.post("/api/items", json={"title": "Also mine", "year": 2024, "authors": [
+        {"given": "Bo", "family": "Plain"}, {"given": "Ada", "family": "Lovelace"}]})
+    everyone = {p["name"]: p for p in client.get("/api/people", params={"scope": "all"}).json()["people"]}
+    ada, bo = everyone["Ada Lovelace"]["id"], everyone["Bo Plain"]["id"]
+    assert client.get("/api/library-counts").json()["me"] is None
+
+    me = client.post(f"/api/people/{ada}/me", json={"on": True}).json()
+    assert me["is_me"]
+    counts = client.get("/api/library-counts").json()
+    assert counts["me"] == {"id": ada, "name": "Ada Lovelace"} and counts["mine"] == 2
+    assert [i["title"] for i in client.get("/api/items", params={"mine": True}).json()] == ["Also mine", "Mine"]
+    home = client.get("/api/home").json()
+    assert home["me"]["id"] == ada and [i["title"] for i in home["mine"]] == ["Also mine", "Mine"]
+    assert client.get("/api/people", params={"scope": "all"}).json()["people"][0]["id"] == ada   # you first
+
+    # Only one person is you; you stay when your papers go.
+    client.post(f"/api/people/{bo}/me", json={"on": True})
+    assert client.get("/api/library-counts").json()["me"]["id"] == bo
+    client.post(f"/api/people/{ada}/me", json={"on": True})
+    client.delete(f"/api/items/{one['id']}", params={"permanent": True})
+    assert client.get(f"/api/people/{ada}").status_code == 200
+    client.post(f"/api/people/{ada}/me", json={"on": False})
+    assert client.get("/api/library-counts").json()["me"] is None

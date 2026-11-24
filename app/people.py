@@ -647,6 +647,17 @@ def unfollow(conn, person_id: int) -> None:
     conn.commit()
 
 
+def set_me(conn, person_id: int, on: bool = True) -> None:
+    """Say which author you are (only one person can be you), or that this one is not you.
+    Your papers are then those you are an author of (db.MINE_SQL)."""
+    from . import authors
+    if on:
+        conn.execute("UPDATE people SET is_me = 0 WHERE is_me = 1 AND id != ?", (person_id,))
+    conn.execute("UPDATE people SET is_me = ? WHERE id = ?", (int(on), person_id))
+    authors.drop_orphans(conn)
+    conn.commit()
+
+
 def refresh_person(conn, person_id: int, full: bool = False) -> int:
     """Look for new works: the latest ones (what the radar needs), or all of them (full)."""
     row = conn.execute("SELECT orcid, family_name FROM people WHERE id = ?", (person_id,)).fetchone()
@@ -700,6 +711,7 @@ def _person_dict(r) -> dict:
     p = dict(r)
     p["topics"] = json.loads(p.get("topics") or "[]")
     p["followed"] = bool(p.get("followed"))
+    p["is_me"] = p.get("is_me") == 1
     p["photo_url"] = (f"/api/people/{p['id']}/photo?v={(p.get('profile_checked') or '')[:19]}{p.get('photo_source') or ''}"
                       if p.get("photo") else None)
     return p
@@ -707,8 +719,8 @@ def _person_dict(r) -> dict:
 
 _PAPERS = ("(SELECT COUNT(DISTINCT a.item_id) FROM item_authors a JOIN items i ON i.id = a.item_id "
            "AND i.deleted_at IS NULL WHERE a.person_id = p.id) AS papers")
-# The people in the library: those you follow and the authors of papers not in the trash.
-IN_LIBRARY = ("(p.followed = 1 OR EXISTS (SELECT 1 FROM item_authors a JOIN items i ON i.id = a.item_id "
+# The people in the library: you, those you follow and the authors of papers not in the trash.
+IN_LIBRARY = ("(p.followed = 1 OR p.is_me = 1 OR EXISTS (SELECT 1 FROM item_authors a JOIN items i ON i.id = a.item_id "
               "AND i.deleted_at IS NULL WHERE a.person_id = p.id))")
 
 
@@ -717,12 +729,12 @@ def list_people(conn, scope: str = "following", person_id: int | None = None) ->
     in the library and everyone followed, those followed first, then by papers."""
     if scope == "all":
         rows = conn.execute(
-            f"SELECT p.id, p.orcid, p.name, p.family_name, p.followed, p.affiliation, p.h_index, p.photo, p.photo_source, "
+            f"SELECT p.id, p.orcid, p.name, p.family_name, p.followed, p.is_me, p.affiliation, p.h_index, p.photo, p.photo_source, "
             f"p.profile_checked, p.topics, {_PAPERS}, "
             "(SELECT COUNT(*) FROM person_works w WHERE w.person_id = p.id) AS works, "
             "(SELECT COUNT(*) FROM person_works w WHERE w.person_id = p.id AND w.is_new = 1 "
             " AND w.dismissed_at IS NULL AND w.seen_at IS NULL) AS unseen "
-            f"FROM people p WHERE {IN_LIBRARY} ORDER BY p.followed DESC, papers DESC, lower(p.family_name), lower(p.name)")
+            f"FROM people p WHERE {IN_LIBRARY} ORDER BY p.is_me = 1 DESC, p.followed DESC, papers DESC, lower(p.family_name), lower(p.name)")
         return [_person_dict(r) for r in rows]
     where, params = ("p.id = ?", (person_id,)) if person_id is not None else ("p.followed = 1", ())
     return [_person_dict(r) for r in conn.execute(

@@ -275,11 +275,12 @@ def me():
 def list_items(conn: Conn, q: str | None = None, collection: int | None = None,
                tag: str | None = None, unfiled: bool = False, sort: str = "year",
                subcollections: bool = False, to_read: bool = False, venue: str | None = None,
-               trash: bool = False):
+               trash: bool = False, mine: bool = False):
     if trash:
         purge_expired_trash(conn)
     return db.list_items(conn, q=q, collection_id=collection, tag=tag, unfiled=unfiled, sort=sort,
-                         subcollections=subcollections, to_read=to_read, venue=venue, trash=trash)
+                         subcollections=subcollections, to_read=to_read, venue=venue, trash=trash,
+                         mine=mine)
 
 
 @app.get("/api/journals", dependencies=[Auth])
@@ -695,6 +696,18 @@ def unfollow_person(person_id: int, conn: Conn):
     return {"ok": True}
 
 
+class MeIn(BaseModel):
+    on: bool = True
+
+
+@app.post("/api/people/{person_id}/me", dependencies=[Auth])
+def set_me(person_id: int, body: MeIn, conn: Conn):
+    """Say that this author is you (your papers are then theirs), or that they are not."""
+    _person_or_404(conn, person_id)
+    people.set_me(conn, person_id, body.on)
+    return _person_or_404(conn, person_id)
+
+
 class MergeIn(BaseModel):
     other_id: int
     name: str | None = Field(default=None, max_length=300)    # the name to keep
@@ -890,10 +903,12 @@ def home(conn: Conn):
     radar = people.radar(conn)
     shelf = sorted(journals.list_journals(conn), key=lambda j: (-j["papers"], j["name"].lower()))
     counts = db.library_counts(conn)
+    mine = db.list_items(conn, mine=True, sort="year") if counts["me"] else []
     return {
+        "me": counts["me"], "mine": mine[:12],
         "counts": {
             "papers": len(items), "with_pdf": sum(1 for i in items if i["has_file"]), "to_read": len(to_read),
-            "journals": counts["journals"], "trash": counts["trash"],
+            "journals": counts["journals"], "trash": counts["trash"], "mine": len(mine),
             "people": conn.execute(f"SELECT COUNT(*) FROM people p WHERE {people.IN_LIBRARY}").fetchone()[0],
             "following": len(following), "radar_unseen": people.radar_unseen(conn), "radar": len(radar),
             "collections": conn.execute("SELECT COUNT(*) FROM collections").fetchone()[0],

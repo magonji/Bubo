@@ -216,7 +216,8 @@ def init_db() -> None:
     people_columns = {r["name"] for r in conn.execute("PRAGMA table_info(people)")}
     for column in ["family_name", "name_key", "followed INTEGER NOT NULL DEFAULT 0", "country", "role", "openalex_id", "works_count INTEGER", "cited_by INTEGER",
                    "h_index INTEGER", "topics", "wikidata_id", "description", "wikipedia", "photo",
-                   "photo_source", "photo_credit", "profile_checked", "photo_looked", "name_fixed INTEGER"]:
+                   "photo_source", "photo_credit", "profile_checked", "photo_looked", "name_fixed INTEGER",
+                   "is_me INTEGER NOT NULL DEFAULT 0"]:
         name, _, kind = column.partition(" ")
         if name not in people_columns:
             conn.execute(f"ALTER TABLE people ADD COLUMN {name} {kind or 'TEXT'}")
@@ -426,10 +427,15 @@ def venue_key_sql(col: str = "venue") -> str:
             "'   ', ' '), '  ', ' ')))")
 
 
+# The papers whose authors include you (the person you said you are, people.set_me).
+MINE_SQL = "SELECT a.item_id FROM item_authors a JOIN people p ON p.id = a.person_id WHERE p.is_me = 1"
+
+
 def list_items(conn, q: str | None = None, collection_id: int | None = None,
                tag: str | None = None, unfiled: bool = False, sort: str = "year",
                ids: list[int] | None = None, subcollections: bool = False,
-               to_read: bool = False, venue: str | None = None, trash: bool = False) -> list[dict]:
+               to_read: bool = False, venue: str | None = None, trash: bool = False,
+               mine: bool = False) -> list[dict]:
     # Papers in the trash are listed only in the trash.
     where, params = [f"i.deleted_at IS {'NOT ' if trash else ''}NULL"], []
     if venue:
@@ -454,6 +460,9 @@ def list_items(conn, q: str | None = None, collection_id: int | None = None,
         where.append("i.id NOT IN (SELECT item_id FROM item_collections)")
     if to_read:
         where.append("i.to_read_at IS NOT NULL")
+    if mine:
+        # Your own papers: those you are an author of (people.set_me).
+        where.append(f"i.id IN ({MINE_SQL})")
     if tag:
         where.append("i.id IN (SELECT it.item_id FROM item_tags it JOIN tags t "
                      "ON t.id = it.tag_id WHERE t.name = ? COLLATE NOCASE)")
@@ -977,8 +986,11 @@ def library_counts(conn) -> dict:
         f"COUNT(DISTINCT CASE WHEN trim(venue) != '' THEN {venue_key_sql()} END) AS journals "
         "FROM items WHERE deleted_at IS NULL").fetchone()
     trash = conn.execute("SELECT COUNT(*) FROM items WHERE deleted_at IS NOT NULL").fetchone()[0]
+    me = conn.execute("SELECT id, name FROM people WHERE is_me = 1").fetchone()
+    mine = conn.execute(f"SELECT COUNT(*) FROM items WHERE deleted_at IS NULL AND id IN ({MINE_SQL})").fetchone()[0]
     return {"all": row["all_items"], "unfiled": row["unfiled"] or 0, "to_read": row["to_read"] or 0,
-            "journals": row["journals"] or 0, "trash": trash}
+            "journals": row["journals"] or 0, "trash": trash, "mine": mine,
+            "me": {"id": me["id"], "name": me["name"]} if me else None}
 
 
 def missing_details(item: dict) -> list[str]:
