@@ -318,6 +318,7 @@ function personHero(p) {
            <span class="muted ph-follow-note">${p.orcid ? "Their new publications will appear on your radar." : "Needs their ORCID iD."}</span>`}
         ${p.is_me
           ? `<button type="button" data-act="not-me" title="Your papers are those this person is an author of">${icon("user")} Not me</button>`
+          : state.counts?.me ? ""      /* someone else is you: "Not me" on their page first */
           : `<button type="button" data-act="me" title="Their papers will be listed under My papers">${icon("user")} This is me</button>`}
       </div>
     </div>
@@ -450,8 +451,6 @@ $("#works").addEventListener("click", async (e) => {
       loadWorks();
     } else if (act === "me" || act === "not-me") {
       const p = worksState.person, on = act === "me";
-      const before = state.counts?.me;
-      if (on && before && before.id !== p.id && !confirm(`You said you are ${before.name}. Are you ${p.name} instead?`)) return;
       await api(`/api/people/${p.id}/me`, { json: { on } });
       toast(on ? `You are ${p.name}: your papers are under My papers` : `${p.name} is no longer you`);
       await loadSidebar();
@@ -640,4 +639,80 @@ async function openMergeDialog(p) {
 $("#works").addEventListener("keydown", (e) => {
   const row = e.target.closest("tr[data-person-card]");
   if (row && (e.key === "Enter" || e.key === " ")) { e.preventDefault(); row.click(); }
+});
+
+// --------------------------------------------------------------------------
+// My papers: who you are, your citations, and your publications not in the library
+// --------------------------------------------------------------------------
+const mineState = { token: 0, data: null, open: false };
+
+function renderMineHead() {
+  const box = $("#journal-hero");
+  if (state.view.type !== "mine") {
+    if (box.classList.contains("mine-head")) { box.classList.remove("mine-head"); box.hidden = true; box.innerHTML = ""; }
+    return;
+  }
+  box.hidden = false;
+  box.dataset.name = "";
+  box.classList.add("mine-head");
+  if (mineState.data) drawMineHead();
+  const token = ++mineState.token;
+  api("/api/my-papers").then((d) => {
+    if (token !== mineState.token || state.view.type !== "mine") return;
+    mineState.data = d;
+    drawMineHead();
+  }).catch((err) => toast(err.message, true));
+}
+
+function drawMineHead() {
+  const box = $("#journal-hero"), d = mineState.data, p = d?.person;
+  if (!p) { box.innerHTML = ""; return; }
+  const stat = (n, label, tip = "") => `<span${tip ? ` title="${tip}"` : ""}><b>${n}</b> ${label}</span>`;
+  const missing = d.missing || [];
+  const shown = mineState.open ? missing : missing.slice(0, 3);
+  box.innerHTML = `
+    <a class="mine-photo" href="#" data-act="mine-person" title="Your page">${avatarHTML(p, "avatar-hero")}</a>
+    <div class="jh-text">
+      <h2>My papers</h2>
+      <p class="muted"><a href="#" data-act="mine-person">${esc(p.name)}</a>${p.affiliation ? ` · ${esc(p.affiliation)}` : ""}</p>
+      <div class="ph-stats">
+        ${stat(d.papers, d.papers === 1 ? "paper in your library" : "papers in your library")}
+        ${stat(bigNumber(d.citations), d.citations === 1 ? "citation" : "citations", "Citations of the papers in your library (OpenAlex)")}
+        ${stat(d.h_index, "h-index here", "Counted from the papers in your library")}
+        ${p.h_index != null ? stat(p.h_index, "h-index", "From your OpenAlex profile, with all your publications") : ""}
+      </div>
+    </div>
+    ${missing.length ? `<section class="mine-missing">
+      <h3>${missing.length === d.works ? `None of your ${d.works} publications is in your library yet`
+        : `${missing.length} of your ${d.works} publications ${missing.length === 1 ? "is" : "are"} not in your library`}</h3>
+      <div class="mine-works">${shown.map((w) => workRow(w, false)).join("")}</div>
+      ${missing.length > shown.length ? `<button type="button" class="pv-link" data-act="mine-more">Show all ${missing.length}</button>`
+        : missing.length > 3 ? `<button type="button" class="pv-link" data-act="mine-less">Show fewer</button>` : ""}
+    </section>`
+      : !p.orcid ? `<p class="mine-note muted">With your ORCID iD on <a href="#" data-act="mine-person">your page</a>, Bubo can list your publications that are not in your library.</p>` : ""}`;
+}
+
+$("#journal-hero").addEventListener("click", async (e) => {
+  if (state.view.type !== "mine") return;
+  const el = e.target.closest("[data-act]");
+  if (!el) return;
+  e.preventDefault();
+  const act = el.dataset.act, p = mineState.data?.person;
+  if (act === "mine-person" && p) return setView({ type: "person", id: p.id, name: p.name });
+  if (act === "mine-more" || act === "mine-less") { mineState.open = act === "mine-more"; return drawMineHead(); }
+  if (act === "open") return showItem(Number(el.dataset.item));
+  if (act !== "add") return;
+  const w = mineState.data.missing.find((x) => x.id === Number(el.closest("[data-work]").dataset.work));
+  if (!w) return;
+  el.disabled = true;
+  el.innerHTML = "Adding…";
+  try {
+    const r = await api(`/api/works/${w.id}/add`, { json: { to_read: !!state.settings.new_items_to_read } });
+    toast(r.status === "duplicate" ? "Already in your library" : r.item.has_file ? "Added with its PDF" : "Added to your library");
+    await loadSidebar();
+    loadItems();
+  } catch (err) {
+    toast(err.message, true);
+    drawMineHead();
+  }
 });

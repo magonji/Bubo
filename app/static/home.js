@@ -47,6 +47,15 @@ function renderHome() {
       </button>`).join("")}</div>`
     : `<p class="ov-empty">${c.following ? "Nothing new from the people you follow for now." : "Follow scientists and their new publications will appear here."}</p>`;
 
+  const citing = ov.citations.length ? `<div class="hm-radar hm-citing">${ov.citations.map((w) => `
+      <div class="hm-work">
+        <span class="hm-work-title">${w.is_new ? `<span class="w-new">New</span>` : ""}${w.doi
+          ? `<a href="https://doi.org/${esc(w.doi)}" target="_blank" rel="noopener">${esc(w.title)}</a>` : esc(w.title)}</span>
+        <span class="hm-work-meta">${esc([w.authors.length > 2 ? `${w.authors[0]} et al.` : w.authors.join(" and "), w.venue, shortDate(w.pub_date)].filter(Boolean).join(" · "))}</span>
+        <span class="hm-cites">Cites ${w.cites.map((p) => `<a href="/paper/${p.id}" data-id="${p.id}">${esc(p.title)}</a>`).join(", ")}</span>
+      </div>`).join("")}</div>`
+    : `<p class="ov-empty">Bubo looks up who cites your papers with a DOI every few days; the latest will appear here.</p>`;
+
   const incomplete = ov.incomplete.length ? `<div class="pv-details ov-list">${ov.incomplete.map((i) => {
       const known = i.doi || i.arxiv_id;
       return `<div class="ov-row-wrap">
@@ -91,6 +100,7 @@ function renderHome() {
       ${section("Recently added", strip(ov.recent, "Nothing yet: press Add to bring in your first paper."), all("all", "My library"), "hm-wide")}
       ${ov.me ? section("Your papers", strip(ov.mine, "None of the papers in your library is yours yet."),
           c.mine > ov.mine.length ? all("mine", `All ${c.mine}`) : all("mine", "My papers"), "hm-wide")
+        + section("Latest citations of your papers", citing, "", "hm-wide")
         : c.papers ? section("Your papers", `<p class="ov-empty">Are you an author of some of these papers? Find yourself in
           <button type="button" class="link-btn" data-view="people">People</button> and choose <b>This is me</b>: your papers will have a page of their own.</p>`, "", "hm-wide") : ""}
       ${section("On your reading list", strip(ov.to_read, "Your reading list is empty. Add papers with the bookmark on their sheet."),

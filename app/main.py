@@ -708,6 +708,12 @@ def set_me(person_id: int, body: MeIn, conn: Conn):
     return _person_or_404(conn, person_id)
 
 
+@app.get("/api/my-papers", dependencies=[Auth])
+def my_page(conn: Conn):
+    """The top of My papers: you, your citations and h-index, your publications not in the library."""
+    return people.my_page(conn) or {"person": None}
+
+
 class MergeIn(BaseModel):
     other_id: int
     name: str | None = Field(default=None, max_length=300)    # the name to keep
@@ -891,6 +897,7 @@ def home(conn: Conn):
     mine = db.list_items(conn, mine=True, sort="year") if counts["me"] else []
     return {
         "me": counts["me"], "mine": mine[:12],
+        "citations": people.latest_citations(conn) if counts["me"] else [],
         "counts": {
             "papers": len(items), "with_pdf": sum(1 for i in items if i["has_file"]), "to_read": len(to_read),
             "journals": counts["journals"], "trash": counts["trash"], "mine": len(mine),

@@ -153,6 +153,19 @@ CREATE TABLE IF NOT EXISTS person_works (
 );
 CREATE INDEX IF NOT EXISTS idx_person_works_new ON person_works(is_new, dismissed_at);
 
+-- Works that cite your own papers, from OpenAlex (people.citing), for the home page.
+CREATE TABLE IF NOT EXISTS citing_works (
+    work_id    TEXT PRIMARY KEY,            -- OpenAlex id, 'W2741809807'
+    doi        TEXT,
+    title      TEXT NOT NULL,
+    authors    TEXT NOT NULL DEFAULT '[]',  -- names
+    venue      TEXT,
+    pub_date   TEXT,
+    cites      TEXT NOT NULL DEFAULT '[]',  -- ids of your papers it cites
+    first_seen TEXT NOT NULL,
+    is_new     INTEGER NOT NULL DEFAULT 0   -- found after the first look (not there from the start)
+);
+
 -- Journals' profiles from OpenAlex, by lower-cased name (journals.py).
 CREATE TABLE IF NOT EXISTS journals (
     key        TEXT PRIMARY KEY,
@@ -186,6 +199,9 @@ SORTS = {
     "authors_desc": "lower(json_extract(i.authors, '$[0].family')) DESC NULLS LAST",
     "venue": "lower(i.venue) ASC NULLS LAST",
     "venue_desc": "lower(i.venue) DESC NULLS LAST",
+    # Citations (looked up for your own papers): most cited first.
+    "cited": "i.cited_by DESC NULLS LAST, i.year DESC NULLS LAST, i.id DESC",
+    "cited_asc": "i.cited_by ASC NULLS LAST, i.year DESC NULLS LAST, i.id DESC",
     # Reading list: the order in which papers were put on it.
     "to_read": "i.to_read_at ASC, i.id ASC",
     "to_read_desc": "i.to_read_at DESC, i.id DESC",
@@ -242,6 +258,9 @@ def init_db() -> None:
         ("authors_openalex", "TEXT"),     # when authors' OpenAlex ids were looked for (authors.py)
         ("deleted_at", "TEXT"),           # in the trash since (NULL: in the library)
         ("ocr_status", "TEXT"),           # NULL (not looked at) | none (not a scan) | done | error
+        ("cited_by", "INTEGER"),          # citations (OpenAlex), looked up for your own papers
+        ("cited_checked", "TEXT"),        # when cited_by was looked up
+        ("openalex_work", "TEXT"),        # its OpenAlex id (for the works citing it)
     ]:
         if column not in columns:
             conn.execute(f"ALTER TABLE items ADD COLUMN {column} {kind}")

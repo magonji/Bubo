@@ -1493,3 +1493,58 @@ def test_you_can_say_which_author_you_are(client):
     assert client.get(f"/api/people/{ada}").status_code == 200
     client.post(f"/api/people/{ada}/me", json={"on": False})
     assert client.get("/api/library-counts").json()["me"] is None
+
+
+def test_your_citations_and_publications_not_in_the_library(client, monkeypatch):
+    from app import people
+    login(client)
+    a = client.post("/api/items", json={"title": "Cited a lot", "year": 2020, "doi": "10.9/a",
+                                        "authors": [{"given": "Grace", "family": "Quinterro"}]}).json()
+    client.post("/api/items", json={"title": "Cited a little", "year": 2021, "doi": "10.9/b",
+                                    "authors": [{"given": "Grace", "family": "Quinterro"}]})
+    ada = client.get(f"/api/items/{a['id']}/people").json()["authors"][0]["id"]
+    from app import db
+    conn = db.connect()
+    conn.execute("UPDATE people SET orcid = '0000-0003-1415-9269' WHERE id = ?", (ada,))
+    conn.commit()
+    conn.close()
+    recent = people._now().date().isoformat()
+    monkeypatch.setattr(people, "fetch_works", lambda o, family=None, full=True: [
+        {"key": "doi:10.9/a", "doi": "10.9/a", "title": "Cited a lot", "authors": [], "venue": None, "pub_date": "2020", "type": None, "url": None},
+        {"key": "doi:10.9/c", "doi": "10.9/c", "title": "Not here yet", "authors": [], "venue": None, "pub_date": recent, "type": None, "url": None}])
+
+    class Resp:
+        def __init__(self, data): self.data = data
+        def raise_for_status(self): pass
+        def json(self): return self.data
+    citing = {"id": "https://openalex.org/W9", "doi": "https://doi.org/10.5/z", "title": "Building on Quinterro",
+              "publication_date": "2026-02-01", "authorships": [{"author": {"display_name": "Zed Zee"}}],
+              "primary_location": {"source": {"display_name": "Nature"}},
+              "referenced_works": ["https://openalex.org/W1", "https://openalex.org/W77"]}
+    class Fake:
+        def __enter__(self): return self
+        def __exit__(self, *a): pass
+        def get(self, url, params=None, **kw):
+            if params["filter"].startswith("cites:"):
+                assert params["filter"] == "cites:W1|W2"
+                return Resp({"results": [citing]})
+            return Resp({"results": [{"id": "https://openalex.org/W1", "doi": "https://doi.org/10.9/A", "cited_by_count": 12},
+                                     {"id": "https://openalex.org/W2", "doi": "https://doi.org/10.9/b", "cited_by_count": 1}]})
+    monkeypatch.setattr(people, "_client", Fake)
+    client.post(f"/api/people/{ada}/me", json={"on": True})
+
+    me = client.get("/api/my-papers").json()
+    assert me["person"]["id"] == ada and me["papers"] == 2 and me["citations"] == 13 and me["h_index"] == 1
+    assert me["works"] == 2 and [w["title"] for w in me["missing"]] == ["Not here yet"]
+    mine = client.get("/api/items", params={"mine": True, "sort": "cited"}).json()
+    assert [(i["title"], i["cited_by"]) for i in mine] == [("Cited a lot", 12), ("Cited a little", 1)]
+    cited = client.get("/api/home").json()["citations"]
+    assert [(w["title"], w["authors"], [p["title"] for p in w["cites"]], w["is_new"]) for w in cited] == [
+        ("Building on Quinterro", ["Zed Zee"], ["Cited a lot"], False)]          # the first look: not news
+    # Your own recent publication is not news on the radar unless you follow yourself.
+    assert client.get("/api/radar").json() == {"works": [], "unseen": 0}
+    assert client.get("/api/people").json()["radar_unseen"] == 0
+    # No longer you: your publications go.
+    client.post(f"/api/people/{ada}/me", json={"on": False})
+    assert client.get("/api/my-papers").json() == {"person": None}
+    assert client.get("/api/home").json()["citations"] == []

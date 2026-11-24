@@ -415,6 +415,8 @@ mark { background: var(--mark); color: inherit; border-radius: 2px; padding: 0 1
 .detail .buttons [data-tip]:first-child::after { left: 0; transform: none; }
 .detail .buttons [data-tip]:last-child::after { left: auto; right: 0; transform: none; }
 .topbar [data-tip]::after { left: auto; right: 0; transform: none; }
+/* The view buttons at the right edge of the list: tooltips open leftwards, inside the window. */
+.density [data-tip]::after { left: auto; right: 0; transform: none; }
 body:has(dialog[open]) [data-tip]::after { opacity: 0; }
 
 /* Toggle switch (a checkbox styled as a switch; use with role="switch") */
@@ -1438,3 +1440,25 @@ body.works-view .list-tools { display: none; }
 .ph-you { font-size: 12px; margin-left: 6px; }
 .pt-you { margin-left: 6px; font-size: 10px; padding: 1px 6px; }
 .pc-you { background: var(--accent) !important; color: #1A1205 !important; }
+
+/* My papers: you, your citations and your publications not in the library (people.js) */
+.journal-hero.mine-head { flex-wrap: wrap; align-items: flex-start; }
+.mine-head .mine-photo { flex: none; line-height: 0; }
+.mine-head .mine-photo .avatar-hero { width: 96px; height: 120px; font-size: 32px; }
+.mine-head h2 { margin: 0 0 4px; }
+.mine-head .jh-text { flex: 1; min-width: 0; }
+.mine-head .jh-text p a { color: inherit; }
+.mine-missing, .mine-note { flex-basis: 100%; margin: 4px 0 0; }
+.mine-missing h3 { font-size: 14px; margin: 6px 0 4px; }
+.mine-works { border-top: 1px solid var(--sep); }
+.mine-works .work-row { padding-left: 0; padding-right: 0; }
+.mine-missing > .pv-link { margin-top: 8px; }
+.col-cited { text-align: right; padding-right: 14px !important; font-variant-numeric: tabular-nums; }
+
+/* Home: the latest works citing your papers */
+.hm-citing .hm-work:hover { background: none; }
+.hm-citing .hm-work-title a { color: var(--text); text-decoration: none; }
+.hm-citing .hm-work-title a:hover { text-decoration: underline; }
+.hm-cites { font-size: 12.5px; color: var(--muted); overflow: hidden; white-space: nowrap; text-overflow: ellipsis; max-width: 100%; }
+.hm-cites a { color: var(--accent-strong); text-decoration: none; }
+.hm-cites a:hover { text-decoration: underline; }

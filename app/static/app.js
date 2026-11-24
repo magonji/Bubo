@@ -76,7 +76,9 @@ const state = {
   settings: { include_subcollections: false, new_items_to_read: false },
   sortToRead: "year",
 };
-const sortKey = () => (state.view.type === "toread" ? state.sortToRead : state.sort);
+// Citations are looked up only for your own papers: elsewhere that order is the default one.
+const sortKey = () => (state.view.type === "toread" ? state.sortToRead
+  : state.sort.startsWith("cited") && state.view.type !== "mine" ? "year" : state.sort);
 function setSortKey(value) {
   if (state.view.type === "toread") state.sortToRead = value;
   else state.sort = value;
@@ -207,6 +209,7 @@ async function loadSidebar() {
 async function loadItems() {
   // A followed person's publications, or the radar (people.js).
   document.body.classList.toggle("home-view", state.view.type === "home");
+  if (state.view.type !== "mine") renderMineHead();   // people.js: leave My papers' head behind
   if (state.view.type === "home") return loadHome();                // home.js
   if (["person", "radar", "people"].includes(state.view.type)) return loadWorks();
   if (state.view.type === "journals") return loadJournals();   // journals.js
@@ -227,6 +230,7 @@ async function loadItems() {
   renderItems();
   renderJournalHero();
   renderTrashHead();
+  renderMineHead();     // people.js
 }
 
 async function refresh() {
@@ -597,6 +601,7 @@ const COLUMNS = {
   year: { head: () => "Year", sort: "year", width: "58px" },
   venue: { head: () => "Publication", sort: "venue", width: "15%" },
   added: { head: () => "Added", sort: "added", width: "116px" },
+  cited: { head: () => "Cited", sort: "cited", width: "70px", title: "Citations (OpenAlex)" },
   notes: { head: () => icon("note"), title: "Notes and annotations", width: "30px", icon: true },
   pdf: { head: () => icon("file"), title: "PDF", width: "34px", icon: true },
 };
@@ -604,12 +609,17 @@ const LAYOUTS = {
   comfortable: ["status", "title", "year", "added", "notes", "pdf"],
   compact: ["status", "title", "authors", "year", "venue", "added", "notes", "pdf"],
 };
+// The table's columns: in My papers, citations instead of the date added.
+function tableColumns() {
+  const cols = LAYOUTS[state.density] || LAYOUTS.comfortable;
+  return state.view.type === "mine" ? cols.map((c) => (c === "added" ? "cited" : c)) : cols;
+}
 
 function renderHead() {
-  const cols = LAYOUTS[state.density] || LAYOUTS.comfortable;
+  const cols = tableColumns();
   const sort = sortKey(), base = sort.replace(/_(asc|desc)$/, "");
   // "year" and "added" sort descending by default; everything else ascending.
-  const desc = ["year", "added"].includes(base) ? !sort.endsWith("_asc") : sort.endsWith("_desc");
+  const desc = ["year", "added", "cited"].includes(base) ? !sort.endsWith("_asc") : sort.endsWith("_desc");
   $("#items-cols").innerHTML = cols.map((c) =>
     `<col class="col-${c}"${COLUMNS[c].width ? ` style="width:${COLUMNS[c].width}"` : ""}>`).join("");
   $("#items-head").innerHTML = `<tr>${cols.map((c) => {
@@ -640,6 +650,7 @@ function cell(c, i) {
     case "authors": return `<td class="col-authors" title="${esc(fullAuthors(i.authors))}">${esc(authors)}</td>`;
     case "year": return `<td class="col-year">${i.year ?? ""}</td>`;
     case "venue": return `<td class="col-venue" title="${esc(venue)}">${esc(venue)}</td>`;
+    case "cited": return `<td class="col-cited num" title="Citations (OpenAlex)">${i.cited_by ?? ""}</td>`;
     case "added": return `<td class="col-added" title="${esc(new Date(i.added_at).toLocaleString("en-GB"))}">${fmtDate(i.added_at)}</td>`;
     case "notes": {
       const parts = [i.notes && "Has notes",
@@ -674,7 +685,7 @@ function renderItems() {
   $("#m-count").setAttribute("aria-label", `${state.items.length} item${state.items.length === 1 ? "" : "s"}`);
   $("#empty").classList.toggle("hidden", state.items.length > 0);
   renderHead();
-  const cols = LAYOUTS[state.density] || LAYOUTS.comfortable;
+  const cols = tableColumns();
   $("#items").innerHTML = state.items.map((i) => {
     const sel = state.selectedIds.has(i.id) ? " selected" : "";
     return `<tr data-id="${i.id}" draggable="true" class="item-row${sel}">${cols.map((c) => cell(c, i)).join("")}</tr>${i.match ? `
@@ -726,13 +737,14 @@ function cardMode() {
 
 function cardHTML(i, mode = cardMode()) {
   const authors = authorsShort(i.authors);
+  const cited = state.view.type === "mine" && i.cited_by != null ? `${i.cited_by} citation${i.cited_by === 1 ? "" : "s"}` : "";
   const desk = narrow.matches ? "" : ` draggable="true"${state.selectedIds.has(i.id) ? ' aria-current="true"' : ""}`;
   const sel = state.selectedIds.has(i.id) ? " selected" : "";
   const title = esc(i.title) || "(untitled)";
   const snippet = i.match ? `<div class="c-snippet">${highlight(i.match.snippet)}</div>` : "";
   const onList = i.to_read ? `<span class="sr-only">, on your reading list</span>` : "";
   if (mode === "list") {
-    const meta = [authors, i.venue_short || i.venue, i.year].filter(Boolean).join(" · ");
+    const meta = [authors, i.venue_short || i.venue, i.year, cited].filter(Boolean).join(" · ");
     return `<a class="m-row${sel}" href="/paper/${i.id}" data-id="${i.id}"${desk}>
       <div class="thumb thumb-sm">${thumbHTML(i)}</div>
       <div class="r-text"><div class="c-title">${title}${onList}</div>
@@ -746,7 +758,7 @@ function cardHTML(i, mode = cardMode()) {
       ${i.has_file ? `<span class="badge badge-br" aria-hidden="true">PDF</span>` : ""}
     </div>
     <div class="c-title">${title}${onList}</div>
-    <div class="c-meta">${esc([authors, i.year].filter(Boolean).join(" · "))}</div>
+    <div class="c-meta">${esc([authors, i.year, cited].filter(Boolean).join(" · "))}</div>
     ${i.venue ? `<div class="c-venue">${esc(i.venue)}</div>` : ""}${snippet}
   </a>`;
 }
@@ -754,6 +766,8 @@ function cardHTML(i, mode = cardMode()) {
 const SORT_CHOICES = [["year", "Newest first"], ["year_asc", "Oldest first"], ["added", "Recently added"],
   ["title", "Title (A–Z)"], ["authors", "Author (A–Z)"]];
 const QUEUE_CHOICES = [["to_read", "Longest on the list"], ["to_read_desc", "Latest on the list"]];
+const sortChoices = () => state.view.type === "toread" ? [...SORT_CHOICES, ...QUEUE_CHOICES]
+  : state.view.type === "mine" ? [...SORT_CHOICES, ["cited", "Most cited"]] : SORT_CHOICES;
 
 let figurePoll;
 function renderCards() {
@@ -777,7 +791,7 @@ function renderDeskSort(mode) {
   wrap.classList.toggle("hidden", !show);
   if (!show) return;
   $("#toread-order").classList.add("hidden");
-  const choices = state.view.type === "toread" ? [...SORT_CHOICES, ...QUEUE_CHOICES] : SORT_CHOICES;
+  const choices = sortChoices();
   const sort = sortKey(), select = $("#desk-sort-select");
   select.innerHTML = choices.map(([v, label]) => `<option value="${v}">${label}</option>`).join("") +
     (choices.some(([v]) => v === sort) ? "" : `<option value="${esc(sort)}">Custom order</option>`);
@@ -813,7 +827,7 @@ $$(".view-switch [data-mode]").forEach((b) => b.addEventListener("click", () => 
 // Phones: the order is chosen in a sheet that rises from the bottom.
 function openSortSheet() {
   const dlg = $("#sort-sheet");
-  const choices = state.view.type === "toread" ? [...SORT_CHOICES, ...QUEUE_CHOICES] : SORT_CHOICES;
+  const choices = sortChoices();
   const sort = sortKey();
   dlg.innerHTML = `<div class="sheet-handle" aria-hidden="true"></div>
     <h2 id="sort-sheet-title">Sort by</h2>

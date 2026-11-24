@@ -641,7 +641,8 @@ def follow(conn, text: str, person_id: int | None = None) -> int:
 def unfollow(conn, person_id: int) -> None:
     """Stop following: their publications go, they stay as an author of your papers."""
     from . import authors
-    conn.execute("DELETE FROM person_works WHERE person_id = ?", (person_id,))
+    conn.execute("DELETE FROM person_works WHERE person_id = ? AND person_id NOT IN "
+                 "(SELECT id FROM people WHERE is_me = 1)", (person_id,))
     conn.execute("UPDATE people SET followed = 0, last_checked = NULL, last_error = NULL WHERE id = ?", (person_id,))
     authors.drop_orphans(conn)
     conn.commit()
@@ -649,13 +650,150 @@ def unfollow(conn, person_id: int) -> None:
 
 def set_me(conn, person_id: int, on: bool = True) -> None:
     """Say which author you are (only one person can be you), or that this one is not you.
-    Your papers are then those you are an author of (db.MINE_SQL)."""
+    Your papers are then those you are an author of (db.MINE_SQL). Your publications (by
+    your ORCID iD) are kept, to show those missing from the library, and your papers'
+    citations are looked up; neither is needed at once, so failures are only logged."""
     from . import authors
-    if on:
-        conn.execute("UPDATE people SET is_me = 0 WHERE is_me = 1 AND id != ?", (person_id,))
+    for (old,) in conn.execute("SELECT id FROM people WHERE is_me = 1 AND id != ?", (person_id,)).fetchall():
+        if on:
+            _forget_me(conn, old)
+    if not on:
+        _forget_me(conn, person_id)
     conn.execute("UPDATE people SET is_me = ? WHERE id = ?", (int(on), person_id))
     authors.drop_orphans(conn)
     conn.commit()
+    if on:
+        try:
+            refresh_me(conn, force=True)
+        except Exception as e:
+            log.warning("Your publications and citations: %s", e)
+
+
+def _forget_me(conn, person_id: int) -> None:
+    """No longer you: their publications go (unless you follow them), and their papers'
+    citations stop being looked up."""
+    conn.execute("UPDATE people SET is_me = 0 WHERE id = ?", (person_id,))
+    if not conn.execute("SELECT followed FROM people WHERE id = ?", (person_id,)).fetchone()["followed"]:
+        conn.execute("DELETE FROM person_works WHERE person_id = ?", (person_id,))
+        conn.execute("UPDATE people SET last_checked = NULL, last_error = NULL WHERE id = ?", (person_id,))
+    conn.execute("DELETE FROM citing_works")
+
+
+def citations(conn, item_ids: list[int]) -> int:
+    """Look up how often papers have been cited (OpenAlex, by DOI, 50 per request).
+    Returns how many were found."""
+    rows = conn.execute(f"SELECT id, lower(doi) AS doi FROM items WHERE id IN ({','.join('?' * len(item_ids))}) "
+                        "AND IFNULL(doi, '') != ''", item_ids).fetchall() if item_ids else []
+    found, now = 0, _now().isoformat(timespec="seconds")
+    with _client() as c:
+        for start in range(0, len(rows), 50):
+            batch = rows[start:start + 50]
+            r = c.get(f"{OPENALEX_API}/works", params=_openalex_params(
+                filter="doi:" + "|".join(b["doi"] for b in batch), select="id,doi,cited_by_count", **{"per-page": 50}))
+            r.raise_for_status()
+            works = {_doi(w.get("doi")): w for w in r.json().get("results") or []}
+            for b in batch:
+                if (w := works.get(b["doi"])) and w.get("cited_by_count") is not None:
+                    found += 1
+                    conn.execute("UPDATE items SET cited_by = ?, openalex_work = ? WHERE id = ?",
+                                 (w["cited_by_count"], (w.get("id") or "").rsplit("/", 1)[-1] or None, b["id"]))
+                conn.execute("UPDATE items SET cited_checked = ? WHERE id = ?", (now, b["id"]))
+            conn.commit()
+    return found
+
+
+def refresh_me(conn, force: bool = False) -> None:
+    """Your publications (by your ORCID iD; for the radar too if you follow yourself) and
+    your papers' citations, every profile_days days (BUBO_PROFILE_DAYS)."""
+    from .db import MINE_SQL
+    me = conn.execute("SELECT id, orcid, followed, last_checked FROM people WHERE is_me = 1").fetchone()
+    if not me:
+        return
+    stale = (_now() - timedelta(days=profile_days())).isoformat(timespec="seconds")
+    if me["orcid"] and not me["followed"] and (force or not me["last_checked"] or me["last_checked"] < stale):
+        try:
+            refresh_person(conn, me["id"], full=True)
+        except PeopleError as e:
+            log.warning("Your publications: %s", e)
+    ids = [r[0] for r in conn.execute(
+        f"SELECT id FROM items WHERE id IN ({MINE_SQL}) AND deleted_at IS NULL AND IFNULL(doi, '') != '' "
+        + ("" if force else "AND (cited_checked IS NULL OR cited_checked < ?)"), () if force else (stale,))]
+    if ids:
+        citations(conn, ids)
+        citing(conn)
+
+
+CITING_KEPT = 200     # the latest works citing your papers that are kept
+
+
+def citing(conn) -> int:
+    """The latest works citing your papers (OpenAlex, newest first). Those found after the
+    first look are news. Returns how many were new."""
+    from .db import MINE_SQL
+    mine = {r[0]: r[1] for r in conn.execute(
+        f"SELECT openalex_work, id FROM items WHERE id IN ({MINE_SQL}) AND deleted_at IS NULL AND openalex_work IS NOT NULL")}
+    if not mine:
+        return 0
+    first = conn.execute("SELECT 1 FROM citing_works LIMIT 1").fetchone() is None
+    now = _now().isoformat(timespec="seconds")
+    oid = lambda x: (x or "").rsplit("/", 1)[-1]
+    ids = sorted(mine)
+    with _client() as c:
+        for start in range(0, len(ids), 50):
+            r = c.get(f"{OPENALEX_API}/works", params=_openalex_params(
+                filter="cites:" + "|".join(ids[start:start + 50]), sort="publication_date:desc",
+                select="id,doi,title,display_name,publication_date,primary_location,authorships,referenced_works",
+                **{"per-page": 50}))
+            r.raise_for_status()
+            for w in r.json().get("results") or []:
+                cites = sorted({mine[oid(x)] for x in w.get("referenced_works") or [] if oid(x) in mine})
+                title = html.unescape(w.get("title") or w.get("display_name") or "").strip()
+                if not cites or not title:
+                    continue
+                names = [((a.get("author") or {}).get("display_name") or "").strip() for a in w.get("authorships") or []]
+                source = (w.get("primary_location") or {}).get("source") or {}
+                conn.execute(
+                    "INSERT INTO citing_works (work_id, doi, title, authors, venue, pub_date, cites, first_seen, is_new) "
+                    "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(work_id) DO UPDATE SET cites = excluded.cites",
+                    (oid(w.get("id")), _doi(w.get("doi")), title, json.dumps([n for n in names if n], ensure_ascii=False),
+                     source.get("display_name"), w.get("publication_date"), json.dumps(cites), now,
+                     int(not first and is_recent(w.get("publication_date")))))
+    new = conn.execute("SELECT COUNT(*) FROM citing_works WHERE first_seen = ? AND is_new = 1", (now,)).fetchone()[0]
+    conn.execute("DELETE FROM citing_works WHERE work_id NOT IN (SELECT work_id FROM citing_works "
+                 "ORDER BY pub_date DESC NULLS LAST LIMIT ?)", (CITING_KEPT,))
+    conn.commit()
+    return new
+
+
+def latest_citations(conn, limit: int = 8) -> list[dict]:
+    """The newest works citing your papers, with the papers they cite."""
+    titles = {r[0]: r[1] for r in conn.execute("SELECT id, title FROM items WHERE deleted_at IS NULL")}
+    out = []
+    for r in conn.execute("SELECT * FROM citing_works ORDER BY pub_date DESC NULLS LAST, first_seen DESC LIMIT ?", (limit,)):
+        w = dict(r)
+        w["authors"] = json.loads(w["authors"])
+        w["cites"] = [{"id": i, "title": titles[i]} for i in json.loads(w["cites"]) if i in titles]
+        w["is_new"] = bool(w["is_new"])
+        out.append(w)
+    return [w for w in out if w["cites"]]
+
+
+def my_page(conn) -> dict | None:
+    """What the My papers page shows above the list: who you are, your papers' citations and
+    h-index (counted from the papers in the library), and your publications not in it."""
+    from .db import MINE_SQL
+    me = conn.execute("SELECT id FROM people WHERE is_me = 1").fetchone()
+    if not me:
+        return None
+    cites = sorted((r[0] for r in conn.execute(
+        f"SELECT IFNULL(cited_by, 0) FROM items WHERE id IN ({MINE_SQL}) AND deleted_at IS NULL")), reverse=True)
+    works = person_works(conn, me["id"])
+    return {
+        "person": get_person(conn, me["id"]),
+        "papers": len(cites), "citations": sum(cites),
+        "h_index": sum(1 for n, c in enumerate(cites, 1) if c >= n),
+        "works": len(works), "missing": [w for w in works if not w["in_library"]],
+    }
 
 
 def refresh_person(conn, person_id: int, full: bool = False) -> int:
@@ -733,14 +871,14 @@ def list_people(conn, scope: str = "following", person_id: int | None = None) ->
             f"p.profile_checked, p.topics, {_PAPERS}, "
             "(SELECT COUNT(*) FROM person_works w WHERE w.person_id = p.id) AS works, "
             "(SELECT COUNT(*) FROM person_works w WHERE w.person_id = p.id AND w.is_new = 1 "
-            " AND w.dismissed_at IS NULL AND w.seen_at IS NULL) AS unseen "
+            " AND w.dismissed_at IS NULL AND w.seen_at IS NULL AND p.followed = 1) AS unseen "
             f"FROM people p WHERE {IN_LIBRARY} ORDER BY p.is_me = 1 DESC, p.followed DESC, papers DESC, lower(p.family_name), lower(p.name)")
         return [_person_dict(r) for r in rows]
     where, params = ("p.id = ?", (person_id,)) if person_id is not None else ("p.followed = 1", ())
     return [_person_dict(r) for r in conn.execute(
             f"SELECT p.*, {_PAPERS}, (SELECT COUNT(*) FROM person_works w WHERE w.person_id = p.id) AS works, "
             "(SELECT COUNT(*) FROM person_works w WHERE w.person_id = p.id AND w.is_new = 1 "
-            " AND w.dismissed_at IS NULL AND w.seen_at IS NULL) AS unseen, "
+            " AND w.dismissed_at IS NULL AND w.seen_at IS NULL AND p.followed = 1) AS unseen, "
             "(SELECT COUNT(*) FROM person_works w WHERE w.person_id = p.id AND (w.item_id IS NOT NULL OR "
             " EXISTS (SELECT 1 FROM items i WHERE lower(i.doi) = w.doi AND i.deleted_at IS NULL))) AS in_library "
             f"FROM people p WHERE {where} ORDER BY lower(p.name)", params)]
@@ -771,7 +909,7 @@ def radar(conn) -> list[dict]:
     library = _library_dois(conn)
     rows = conn.execute(
         "SELECT w.*, p.name AS person_name, p.id AS person FROM person_works w "
-        "JOIN people p ON p.id = w.person_id WHERE w.is_new = 1 AND w.dismissed_at IS NULL "
+        "JOIN people p ON p.id = w.person_id WHERE w.is_new = 1 AND w.dismissed_at IS NULL AND p.followed = 1 "
         "ORDER BY w.pub_date DESC NULLS LAST, w.first_seen DESC")
     out, by_key = [], {}
     for r in rows:
@@ -800,7 +938,7 @@ def item_people(conn, item: dict) -> list[dict | None]:
 def radar_unseen(conn) -> int:
     return conn.execute(
         "SELECT COUNT(DISTINCT work_key) FROM person_works WHERE is_new = 1 AND dismissed_at IS NULL "
-        "AND seen_at IS NULL").fetchone()[0]
+        "AND seen_at IS NULL AND person_id IN (SELECT id FROM people WHERE followed = 1)").fetchone()[0]
 
 
 # --------------------------------------------------------------------------- #

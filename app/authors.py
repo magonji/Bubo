@@ -473,6 +473,7 @@ def start() -> None:
                 n = people.fill_profiles(conn)     # then their profiles and photos
                 if n:
                     log.info("Filled in %s authors' profiles", n)
+                people.refresh_me(conn)            # your publications and citations
             except Exception:
                 log.exception("Looking for authors' ORCID iDs failed")
             finally:
