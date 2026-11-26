@@ -149,6 +149,7 @@ CREATE TABLE IF NOT EXISTS person_works (
     seen_at      TEXT,                      -- looked at on the radar
     dismissed_at TEXT,                      -- taken off the radar
     item_id      INTEGER,                   -- added to the library (works without a DOI)
+    ignored_at   TEXT,                      -- one of your publications you do not want in the library
     UNIQUE (person_id, work_key)
 );
 CREATE INDEX IF NOT EXISTS idx_person_works_new ON person_works(is_new, dismissed_at);
@@ -237,6 +238,8 @@ def init_db() -> None:
         name, _, kind = column.partition(" ")
         if name not in people_columns:
             conn.execute(f"ALTER TABLE people ADD COLUMN {name} {kind or 'TEXT'}")
+    if "ignored_at" not in {r["name"] for r in conn.execute("PRAGMA table_info(person_works)")}:
+        conn.execute("ALTER TABLE person_works ADD COLUMN ignored_at TEXT")
     if "supplementary" not in fts_columns:
         # Libraries created before supplementary files: rebuild the index with the new column.
         conn.execute(FTS_SCHEMA.format(name="items_fts_new"))

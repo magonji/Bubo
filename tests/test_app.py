@@ -1536,6 +1536,13 @@ def test_your_citations_and_publications_not_in_the_library(client, monkeypatch)
     me = client.get("/api/my-papers").json()
     assert me["person"]["id"] == ada and me["papers"] == 2 and me["citations"] == 13 and me["h_index"] == 1
     assert me["works"] == 2 and [w["title"] for w in me["missing"]] == ["Not here yet"]
+    # Ignored, it is no longer listed as missing (and stays so when your works are looked at again).
+    work = me["missing"][0]["id"]
+    assert client.post(f"/api/my-papers/works/{work}/ignore", json={"on": True}).status_code == 200
+    me = client.get("/api/my-papers").json()
+    assert me["missing"] == [] and [w["title"] for w in me["ignored"]] == ["Not here yet"]
+    client.post(f"/api/my-papers/works/{work}/ignore", json={"on": False})
+    assert [w["title"] for w in client.get("/api/my-papers").json()["missing"]] == ["Not here yet"]
     mine = client.get("/api/items", params={"mine": True, "sort": "cited"}).json()
     assert [(i["title"], i["cited_by"]) for i in mine] == [("Cited a lot", 12), ("Cited a little", 1)]
     cited = client.get("/api/home").json()["citations"]

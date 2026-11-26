@@ -792,8 +792,18 @@ def my_page(conn) -> dict | None:
         "person": get_person(conn, me["id"]),
         "papers": len(cites), "citations": sum(cites),
         "h_index": sum(1 for n, c in enumerate(cites, 1) if c >= n),
-        "works": len(works), "missing": [w for w in works if not w["in_library"]],
+        "works": len(works),
+        "missing": [w for w in works if not w["in_library"] and not w["ignored_at"]],
+        "ignored": [w for w in works if not w["in_library"] and w["ignored_at"]],
     }
+
+
+def ignore_work(conn, work_id: int, on: bool = True) -> bool:
+    """Leave one of your publications out of those missing from the library (or bring it back)."""
+    cur = conn.execute("UPDATE person_works SET ignored_at = ? WHERE id = ? AND person_id IN "
+                       "(SELECT id FROM people WHERE is_me = 1)", (db.now() if on else None, work_id))
+    conn.commit()
+    return cur.rowcount > 0
 
 
 def refresh_person(conn, person_id: int, full: bool = False) -> int:

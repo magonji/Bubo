@@ -700,6 +700,14 @@ class MeIn(BaseModel):
     on: bool = True
 
 
+@app.post("/api/my-papers/works/{work_id}/ignore", dependencies=[Auth])
+def ignore_my_work(work_id: int, conn: Conn, body: MeIn):
+    """Stop listing one of your publications as missing from the library (on=false: list it again)."""
+    if not people.ignore_work(conn, work_id, body.on):
+        raise HTTPException(404, "Not one of your publications")
+    return {"ok": True}
+
+
 @app.post("/api/people/{person_id}/me", dependencies=[Auth])
 def set_me(person_id: int, body: MeIn, conn: Conn):
     """Say that this author is you (your papers are then theirs), or that they are not."""

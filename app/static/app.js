@@ -5,6 +5,7 @@ const $$ = (s, el = document) => [...el.querySelectorAll(s)];
 // Simple stroke icons (24×24, drawn in the current text colour).
 const ICONS = {
   plus: '<path d="M12 5v14M5 12h14"/>',
+  undo: '<path d="M9 14 4 9l5-5"/><path d="M4 9h10.5a5.5 5.5 0 0 1 0 11H11"/>',
   x: '<path d="M6 6l12 12M18 6 6 18"/>',
   upload: '<path d="M12 16V4M7 9l5-5 5 5M5 20h14"/>',
   pencil: '<path d="M4 20h4L19 9l-4-4L4 16z"/>',

@@ -225,7 +225,8 @@ const ago = (iso) => {
   return h < 1 ? "less than an hour ago" : h < 48 ? `${Math.round(h)} hours ago` : `${Math.round(h / 24)} days ago`;
 };
 
-function workRow(w, radar) {
+// mine: "ignore" or "restore" for your own publications not in the library (My papers).
+function workRow(w, radar, mine = "") {
   const link = w.doi ? `https://doi.org/${w.doi}` : w.url;
   const meta = [authorsShort(w.authors), w.venue, shortDate(w.pub_date)].filter(Boolean).join(" · ");
   const who = radar ? `<div class="w-people">${w.people.map((n) => `<span class="w-person">${icon("person")}${esc(n)}</span>`).join("")}</div>` : "";
@@ -240,6 +241,8 @@ function workRow(w, radar) {
       ${w.in_library
         ? `<button type="button" class="w-in" data-act="open" data-item="${w.item_id}" title="Show it in your library">${icon("check")} In library</button>`
         : `<button type="button" class="w-add" data-act="add">${icon("plus")} Add</button>`}
+      ${mine === "ignore" ? `<button type="button" class="w-ignore" data-act="ignore" title="Do not list it here again">${icon("x")}<span>Ignore</span></button>` : ""}
+      ${mine === "restore" ? `<button type="button" class="w-ignore" data-act="restore" title="List it again among those not in your library">${icon("undo")}<span>Restore</span></button>` : ""}
       ${radar ? `<button type="button" class="w-dismiss" data-act="dismiss" aria-label="Remove from the radar" title="Remove from the radar">${icon("x")}</button>` : ""}
     </div>
   </div>`;
@@ -644,7 +647,7 @@ $("#works").addEventListener("keydown", (e) => {
 // --------------------------------------------------------------------------
 // My papers: who you are, your citations, and your publications not in the library
 // --------------------------------------------------------------------------
-const mineState = { token: 0, data: null, open: false };
+const mineState = { token: 0, data: null, open: false, ignored: false };
 
 function renderMineHead() {
   const box = $("#journal-hero");
@@ -668,8 +671,10 @@ function drawMineHead() {
   const box = $("#journal-hero"), d = mineState.data, p = d?.person;
   if (!p) { box.innerHTML = ""; return; }
   const stat = (n, label, tip = "") => `<span${tip ? ` title="${tip}"` : ""}><b>${n}</b> ${label}</span>`;
-  const missing = d.missing || [];
+  const missing = d.missing || [], ignored = d.ignored || [];
   const shown = mineState.open ? missing : missing.slice(0, 3);
+  const ignoredLink = ignored.length ? `<button type="button" class="pv-link mine-ignored-link" data-act="mine-ignored">${mineState.ignored
+    ? "Hide ignored" : `${ignored.length} ignored`}</button>` : "";
   box.innerHTML = `
     <a class="mine-photo" href="#" data-act="mine-person" title="Your page">${avatarHTML(p, "avatar-hero")}</a>
     <div class="jh-text">
@@ -682,14 +687,40 @@ function drawMineHead() {
         ${p.h_index != null ? stat(p.h_index, "h-index", "From your OpenAlex profile, with all your publications") : ""}
       </div>
     </div>
-    ${missing.length ? `<section class="mine-missing">
-      <h3>${missing.length === d.works ? `None of your ${d.works} publications is in your library yet`
+    ${missing.length || ignored.length ? `<section class="mine-missing">
+      <h3>${!missing.length ? "Your other publications are all ignored"
+        : missing.length === d.works ? `None of your ${d.works} publications is in your library yet`
         : `${missing.length} of your ${d.works} publications ${missing.length === 1 ? "is" : "are"} not in your library`}</h3>
-      <div class="mine-works">${shown.map((w) => workRow(w, false)).join("")}</div>
-      ${missing.length > shown.length ? `<button type="button" class="pv-link" data-act="mine-more">Show all ${missing.length}</button>`
-        : missing.length > 3 ? `<button type="button" class="pv-link" data-act="mine-less">Show fewer</button>` : ""}
+      ${missing.length ? `<div class="mine-works">${shown.map((w) => workRow(w, false, "ignore")).join("")}</div>` : ""}
+      <div class="mine-links">
+        ${missing.length > shown.length ? `<button type="button" class="pv-link" data-act="mine-more">Show all ${missing.length}</button>`
+          : missing.length > 3 ? `<button type="button" class="pv-link" data-act="mine-less">Show fewer</button>` : ""}
+        ${ignoredLink}
+      </div>
+      ${mineState.ignored && ignored.length ? `<div class="mine-works mine-ignored">${ignored.map((w) => workRow(w, false, "restore")).join("")}</div>` : ""}
     </section>`
       : !p.orcid ? `<p class="mine-note muted">With your ORCID iD on <a href="#" data-act="mine-person">your page</a>, Bubo can list your publications that are not in your library.</p>` : ""}`;
+}
+
+// Ignore one of your publications (it stops being listed as missing), or bring it back.
+async function ignoreMyWork(id, on) {
+  const d = mineState.data, [from, to] = on ? ["missing", "ignored"] : ["ignored", "missing"];
+  const w = d[from].find((x) => x.id === id);
+  if (!w) return;
+  const move = (a, b) => {
+    d[a] = d[a].filter((x) => x.id !== id);
+    d[b] = [...d[b], w].sort((x, y) => (y.pub_date || "").localeCompare(x.pub_date || ""));
+    if (!d.ignored.length) mineState.ignored = false;
+    drawMineHead();
+  };
+  move(from, to);
+  try {
+    await api(`/api/my-papers/works/${id}/ignore`, { json: { on } });
+  } catch (err) {
+    move(to, from);
+    return toast(err.message, true);
+  }
+  if (on) toastUndo("Ignored: it will not be listed again", () => ignoreMyWork(id, false));
 }
 
 $("#journal-hero").addEventListener("click", async (e) => {
@@ -700,7 +731,9 @@ $("#journal-hero").addEventListener("click", async (e) => {
   const act = el.dataset.act, p = mineState.data?.person;
   if (act === "mine-person" && p) return setView({ type: "person", id: p.id, name: p.name });
   if (act === "mine-more" || act === "mine-less") { mineState.open = act === "mine-more"; return drawMineHead(); }
+  if (act === "mine-ignored") { mineState.ignored = !mineState.ignored; return drawMineHead(); }
   if (act === "open") return showItem(Number(el.dataset.item));
+  if (act === "ignore" || act === "restore") return ignoreMyWork(Number(el.closest("[data-work]").dataset.work), act === "ignore");
   if (act !== "add") return;
   const w = mineState.data.missing.find((x) => x.id === Number(el.closest("[data-work]").dataset.work));
   if (!w) return;
